@@ -6,6 +6,8 @@ function log(str: string) {
   console.log(`[${new Date().toISOString().substring(0, 19).replace("T", " ")}] [Draft] ${str}`);
 }
 
+const BASE_URL = `http://localhost:${process.env.PORT || 3000}`;
+
 /**
  * Fetch all tournament game IDs from the scoreboard for the current tournament window.
  */
@@ -15,7 +17,7 @@ async function fetchTournamentGameIds(): Promise<string[]> {
 
   for (const date of dates) {
     try {
-      const url = `http://localhost:3000/scoreboard/basketball-men/d1/${date}/all-conf`;
+      const url = `${BASE_URL}/scoreboard/basketball-men/d1/${date}/all-conf`;
       const res = await fetch(url);
       if (!res.ok) continue;
       const data = await res.json();
@@ -65,7 +67,7 @@ async function fetchBoxscorePlayers(
     { name: string; team: string; position: string; pts: number; reb: number; ast: number }
   >();
   try {
-    const res = await fetch(`http://localhost:3000/game/${gameId}/boxscore`);
+    const res = await fetch(`${BASE_URL}/game/${gameId}/boxscore`);
     if (!res.ok) return players;
     const bs = await res.json();
     const teamBoxscores = bs?.teamBoxscore || [];

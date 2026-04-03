@@ -59,6 +59,8 @@ const teamSeoMap: Record<string, string> = {
   "St John": "st-johns",
 };
 
+const BASE_URL = `http://localhost:${process.env.PORT || 3000}`;
+
 export interface PlayerStats {
   name: string;
   team: string;
@@ -89,7 +91,7 @@ async function fetchPlayerPointsForTeam(
 
     for (const date of dates) {
       try {
-        const url = `http://localhost:3000/scoreboard/basketball-men/d1/${date}/all-conf`;
+        const url = `${BASE_URL}/scoreboard/basketball-men/d1/${date}/all-conf`;
         const res = await fetch(url);
         if (!res.ok) continue;
 
@@ -111,7 +113,7 @@ async function fetchPlayerPointsForTeam(
 
           // Fetch boxscore for this game
           try {
-            const bsRes = await fetch(`http://localhost:3000/game/${game.gameID}/boxscore`);
+            const bsRes = await fetch(`${BASE_URL}/game/${game.gameID}/boxscore`);
             if (!bsRes.ok) continue;
             const bs = await bsRes.json();
 
