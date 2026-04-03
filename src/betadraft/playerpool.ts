@@ -72,16 +72,17 @@ async function fetchBoxscorePlayers(
     const bs = await res.json();
     const teamBoxscores = bs?.teamBoxscore || [];
     for (const teamBs of teamBoxscores) {
-      const teamName = teamBs?.team?.name || teamBs?.team?.seoname || "Unknown";
+      const teamName = teamBs?.team?.name || teamBs?.team?.seoname || teamBs?.teamName || `team-${teamBs?.teamId || "unknown"}`;
       const playerStats = teamBs?.playerStats || [];
       for (const ps of playerStats) {
-        const playerName = ps?.player?.name;
+        // Handle both nested format (ps.player.name) and flat format (ps.firstName + ps.lastName)
+        const playerName = ps?.player?.name || [ps?.firstName, ps?.lastName].filter(Boolean).join(" ");
         if (!playerName) continue;
         const key = `${playerName}|${teamName}`;
-        const pts = parseInt(ps?.stats?.pts ?? ps?.stats?.points ?? "0", 10) || 0;
-        const reb = parseInt(ps?.stats?.reb ?? ps?.stats?.rebounds ?? "0", 10) || 0;
-        const ast = parseInt(ps?.stats?.ast ?? ps?.stats?.assists ?? "0", 10) || 0;
-        const position = ps?.player?.position || ps?.stats?.pos || "";
+        const pts = parseInt(ps?.stats?.pts ?? ps?.stats?.points ?? ps?.points ?? "0", 10) || 0;
+        const reb = parseInt(ps?.stats?.reb ?? ps?.stats?.rebounds ?? ps?.totalRebounds ?? "0", 10) || 0;
+        const ast = parseInt(ps?.stats?.ast ?? ps?.stats?.assists ?? ps?.assists ?? "0", 10) || 0;
+        const position = ps?.player?.position || ps?.stats?.pos || ps?.position || "";
         const existing = players.get(key);
         if (existing) {
           existing.pts += pts;
