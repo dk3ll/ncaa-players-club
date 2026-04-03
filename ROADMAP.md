@@ -7,6 +7,7 @@
 - [ ] ESPN-style commentary — AI-generated recaps after each draft round and after the full draft completes (big picks, steals, reaches, team grades)
 - [ ] Additional player ranking formulas — multiple scoring models beyond the current fantasy score composite
 - [ ] Injury indicator — flag injured players during the draft and leading up to the tournament
+- [ ] AI draft opponent — bot player for mock drafts that drafts intelligently based on player rankings, positional need, and team composition
 
 ## Infrastructure
 - [ ] Custom domain registration and DNS setup
