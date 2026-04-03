@@ -317,8 +317,22 @@ export const app = new Elysia()
     },
     { detail: { hide: true } }
   )
-  // redirect index to github page
-  .get("/", ({ redirect }) => redirect("/openapi"), { detail: { hide: true } })
+  // redirect index to landing page
+  .get("/", ({ set }) => {
+    set.headers["Content-Type"] = "text/html";
+    try { return readFileSync(join(import.meta.dir, "landing/index.html"), "utf-8"); }
+    catch { return readFileSync("src/landing/index.html", "utf-8"); }
+  }, { detail: { hide: true } })
+  // Gate password verification
+  .post("/gate/verify", async ({ body, set }) => {
+    set.headers["Content-Type"] = "application/json";
+    const { password } = body as any;
+    const gatePassword = process.env.GATE_PASSWORD || "playersclub2026";
+    if (password === gatePassword) {
+      return JSON.stringify({ ok: true });
+    }
+    return JSON.stringify({ error: "Invalid access code" });
+  }, { detail: { hide: true } })
   // fetch and return logo svg
   .get(
     "/logo/:school",

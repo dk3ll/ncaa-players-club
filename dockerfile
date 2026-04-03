@@ -26,6 +26,7 @@ COPY --from=builder /app/src/dashboard/index.html ./src/dashboard/index.html
 COPY --from=builder /app/src/betadraft/index.html ./src/betadraft/index.html
 COPY --from=builder /app/src/admin/index.html ./src/admin/index.html
 COPY --from=builder /app/src/admin/dashboard.html ./src/admin/dashboard.html
+COPY --from=builder /app/src/landing/index.html ./src/landing/index.html
 
 CMD ["./server"]
 
