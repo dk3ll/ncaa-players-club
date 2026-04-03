@@ -9,10 +9,38 @@ function log(str: string) {
 const BASE_URL = "http://localhost:3000";
 
 /**
- * Fetch all tournament game IDs from the scoreboard for the current tournament window.
+ * Seed-based multiplier representing expected tournament games.
+ * Higher seeds are expected to advance further, increasing their projected total contribution.
+ * Based on CPP Draft Guide methodology.
  */
-async function fetchTournamentGameIds(): Promise<string[]> {
+const SEED_MULTIPLIER: Record<number, number> = {
+  1: 6.0,
+  2: 4.5,
+  3: 4.0,
+  4: 3.5,
+  5: 3.0,
+  6: 3.0,
+  7: 2.5,
+  8: 2.5,
+  9: 2.0,
+  10: 2.0,
+  11: 2.0,
+  12: 2.0,
+  13: 1.0,
+  14: 1.0,
+  15: 1.0,
+  16: 1.0,
+};
+
+/**
+ * Fetch all tournament game IDs and team seeds from the scoreboard.
+ */
+async function fetchTournamentGameIdsAndSeeds(): Promise<{
+  gameIds: string[];
+  teamSeeds: Map<string, number>;
+}> {
   const gameIds: string[] = [];
+  const teamSeeds = new Map<string, number>();
   const dates = getTournamentDates();
 
   for (const date of dates) {
@@ -27,12 +55,22 @@ async function fetchTournamentGameIds(): Promise<string[]> {
         if (id && g?.game?.gameState === "final") {
           gameIds.push(String(id));
         }
+        // Extract seed info from both home and away teams
+        for (const side of ["home", "away"]) {
+          const team = g?.game?.[side];
+          const teamName =
+            team?.names?.full || team?.names?.short || team?.names?.seo || "";
+          const seed = parseInt(team?.seed, 10);
+          if (teamName && seed >= 1 && seed <= 16) {
+            teamSeeds.set(teamName.toLowerCase(), seed);
+          }
+        }
       }
     } catch (_) {
       /* skip */
     }
   }
-  return [...new Set(gameIds)];
+  return { gameIds: [...new Set(gameIds)], teamSeeds };
 }
 
 /** Generate date strings for the 2026 NCAA tournament window */
@@ -101,10 +139,12 @@ async function fetchBoxscorePlayers(
 
 /**
  * Build the full player pool from tournament boxscores.
- * Returns sorted by fantasy score (PPG-weighted composite).
+ * Ranking uses CPP Draft Guide methodology:
+ * - P/R/A PG = PPG + RPG + APG (unweighted sum)
+ * - Fantasy Score = P/R/A PG × seed multiplier (expected tournament games)
  */
 export async function buildPlayerPool(): Promise<DraftPlayer[]> {
-  const gameIds = await fetchTournamentGameIds();
+  const { gameIds, teamSeeds } = await fetchTournamentGameIdsAndSeeds();
   log(`Found ${gameIds.length} games, fetching boxscores...`);
 
   // Track per-player accumulated stats and game count
@@ -148,8 +188,13 @@ export async function buildPlayerPool(): Promise<DraftPlayer[]> {
     const ppg = Math.round((stats.pts / g) * 10) / 10;
     const rpg = Math.round((stats.reb / g) * 10) / 10;
     const apg = Math.round((stats.ast / g) * 10) / 10;
-    // Fantasy score: weighted composite
-    const fantasyScore = Math.round((ppg * 1.0 + rpg * 1.2 + apg * 1.5) * 10) / 10;
+    // P/R/A PG: unweighted sum of per-game averages
+    const praPg = Math.round((ppg + rpg + apg) * 10) / 10;
+    // Look up team seed (default to 16 if unknown)
+    const seed = teamSeeds.get(stats.team.toLowerCase()) || 16;
+    const multiplier = SEED_MULTIPLIER[seed] ?? 1.0;
+    // Fantasy score: P/R/A × seed multiplier (projected tournament contribution)
+    const fantasyScore = Math.round(praPg * multiplier * 10) / 10;
     players.push({
       id: id++,
       name: stats.name,
@@ -158,6 +203,8 @@ export async function buildPlayerPool(): Promise<DraftPlayer[]> {
       ppg,
       rpg,
       apg,
+      seed,
+      praPg,
       fantasyScore,
     });
   }

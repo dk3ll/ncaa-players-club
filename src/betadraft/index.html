@@ -154,6 +154,21 @@ input:focus,select:focus{outline:none;border-color:#4fc3f7}
 .pick-btn{background:#1b5e20;color:#69f0ae;border:none;padding:4px 12px;border-radius:4px;font-size:0.75rem;font-weight:700;cursor:pointer}
 .pick-btn:hover{background:#2e7d32}
 .pick-btn:disabled{background:#333;color:#666;cursor:not-allowed}
+/* Rank info tooltip */
+.rank-info{position:relative;display:inline-flex;align-items:center;gap:4px}
+.rank-info .info-icon{width:14px;height:14px;border-radius:50%;background:#1e2d4a;color:#78909c;font-size:0.55rem;display:inline-flex;align-items:center;justify-content:center;cursor:help;font-style:normal;line-height:1;flex-shrink:0}
+.rank-info .info-icon:hover{background:#263850;color:#e8eaf0}
+.rank-tip{display:none;position:absolute;bottom:calc(100% + 8px);right:0;background:#1a2035;border:1px solid #1e2d4a;border-radius:8px;padding:10px 14px;font-size:0.72rem;color:#e8eaf0;white-space:nowrap;z-index:100;box-shadow:0 4px 16px rgba(0,0,0,0.5);text-transform:none;letter-spacing:0;font-weight:400;text-align:left;line-height:1.5}
+.rank-tip::after{content:'';position:absolute;top:100%;right:12px;border:6px solid transparent;border-top-color:#1e2d4a}
+.rank-tip .tip-formula{color:#f9a825;font-weight:600}
+.rank-tip .tip-label{color:#78909c}
+.rank-tip .tip-val{color:#4fc3f7}
+.rank-info:hover .rank-tip{display:block}
+/* Per-row rank breakdown tooltip */
+.rank-cell{position:relative}
+.rank-cell .row-tip{display:none;position:absolute;bottom:calc(100% + 4px);right:0;background:#1a2035;border:1px solid #1e2d4a;border-radius:8px;padding:10px 14px;font-size:0.72rem;color:#e8eaf0;white-space:nowrap;z-index:100;box-shadow:0 4px 16px rgba(0,0,0,0.5);line-height:1.6}
+.rank-cell .row-tip::after{content:'';position:absolute;top:100%;right:12px;border:6px solid transparent;border-top-color:#1e2d4a}
+.rank-cell:hover .row-tip{display:block}
 /* Sidebar */
 .draft-sidebar{display:flex;flex-direction:column;gap:12px}
 .my-team-panel{background:#131929;border:1px solid #1e2d4a;border-radius:10px;flex:1;overflow:hidden;display:flex;flex-direction:column}
@@ -225,10 +240,12 @@ input:focus,select:focus{outline:none;border-color:#4fc3f7}
 <th onclick="sortPool('name')">Player</th>
 <th onclick="sortPool('team')">Team</th>
 <th onclick="sortPool('position')">Pos</th>
+<th class="num" onclick="sortPool('seed')">Seed</th>
 <th class="num" onclick="sortPool('ppg')">PPG</th>
 <th class="num" onclick="sortPool('rpg')">RPG</th>
 <th class="num" onclick="sortPool('apg')">APG</th>
-<th class="num" onclick="sortPool('fantasyScore')">Rank ▼</th>
+<th class="num" onclick="sortPool('praPg')">P/R/A</th>
+<th class="num" onclick="sortPool('fantasyScore')"><span class="rank-info">Rank ▼<i class="info-icon" title="Rank formula">ℹ</i><span class="rank-tip"><span class="tip-formula">Rank = P/R/A × Seed Multiplier</span><br><span class="tip-label">P/R/A</span> = PPG + RPG + APG<br><br><span class="tip-label">Seed multipliers (expected games):</span><br>Seed 1: <span class="tip-val">6.0×</span> · Seed 2: <span class="tip-val">4.5×</span><br>Seed 3: <span class="tip-val">4.0×</span> · Seed 4: <span class="tip-val">3.5×</span><br>Seeds 5-6: <span class="tip-val">3.0×</span> · Seeds 7-8: <span class="tip-val">2.5×</span><br>Seeds 9-12: <span class="tip-val">2.0×</span> · Seeds 13+: <span class="tip-val">1.0×</span></span></span></th>
 <th></th>
 </tr></thead><tbody id="pool-body"></tbody></table></div>
 </div>
@@ -615,19 +632,37 @@ function renderPool() {
   const isCommissioner = sessionId === draftState.commissionerId;
   const canPick = isMyTurn && draftState.status === 'active';
 
-  document.getElementById('pool-body').innerHTML = pool.map(p => `<tr>
+  document.getElementById('pool-body').innerHTML = pool.map(p => {
+    const pra = p.praPg ?? (Math.round((p.ppg + p.rpg + p.apg) * 10) / 10);
+    const seed = p.seed || 16;
+    const mult = {1:6.0,2:4.5,3:4.0,4:3.5,5:3.0,6:3.0,7:2.5,8:2.5,9:2.0,10:2.0,11:2.0,12:2.0}[seed] || 1.0;
+    return `<tr>
     <td>${p.name}</td><td>${p.team}</td><td>${p.position || '—'}</td>
+    <td class="num" style="color:#90caf9">${p.seed || '—'}</td>
     <td class="num" style="font-weight:700;color:#4fc3f7">${p.ppg}</td>
     <td class="num">${p.rpg}</td>
     <td class="num">${p.apg}</td>
-    <td class="num" style="font-weight:700;color:#f9a825">${p.fantasyScore}</td>
+    <td class="num" style="color:#69f0ae">${pra}</td>
+    <td class="num rank-cell" style="font-weight:700;color:#f9a825">${p.fantasyScore}<span class="row-tip"><span style="color:#f9a825;font-weight:600">${pra}</span> <span style="color:#78909c">P/R/A</span> × <span style="color:#4fc3f7">${mult}×</span> <span style="color:#78909c">(seed ${seed})</span> = <span style="color:#f9a825;font-weight:700">${p.fantasyScore}</span><br><span style="color:#546e7a;font-size:0.65rem">${p.ppg} + ${p.rpg} + ${p.apg} = ${pra} P/R/A</span></span></td>
     <td><button class="pick-btn" ${canPick ? `onclick="doPick(${p.id})"` : 'disabled'}>Draft</button></td>
-  </tr>`).join('');
+  </tr>`;
+  }).join('');
 
   // Update sort indicators in headers
   document.querySelectorAll('.pool-table thead th').forEach(th => {
-    const text = th.textContent.replace(/ [▲▼]/g, '');
     const key = th.getAttribute('onclick')?.match(/sortPool\('(\w+)'\)/)?.[1];
+    if (!key) return;
+    // Skip the Rank header (has nested HTML with info icon)
+    if (key === 'fantasyScore') {
+      const ri = th.querySelector('.rank-info');
+      if (ri) {
+        const textNode = ri.childNodes[0];
+        const base = 'Rank';
+        textNode.textContent = key === poolSort.key ? base + (poolSort.dir === -1 ? ' ▼' : ' ▲') : base;
+      }
+      return;
+    }
+    const text = th.textContent.replace(/ [▲▼]/g, '');
     if (key === poolSort.key) th.textContent = text + (poolSort.dir === -1 ? ' ▼' : ' ▲');
     else th.textContent = text;
   });

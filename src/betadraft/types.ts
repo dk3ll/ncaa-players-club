@@ -8,6 +8,8 @@ export interface DraftPlayer {
   ppg: number;
   rpg: number;
   apg: number;
+  seed: number;
+  praPg: number;
   fantasyScore: number;
 }
 
