@@ -59,7 +59,7 @@ const teamSeoMap: Record<string, string> = {
   "St John": "st-johns",
 };
 
-const BASE_URL = `http://localhost:${process.env.PORT || 3000}`;
+const BASE_URL = "http://localhost:3000";
 
 export interface PlayerStats {
   name: string;

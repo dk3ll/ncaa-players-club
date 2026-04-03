@@ -6,7 +6,7 @@ function log(str: string) {
   console.log(`[${new Date().toISOString().substring(0, 19).replace("T", " ")}] [Draft] ${str}`);
 }
 
-const BASE_URL = `http://localhost:${process.env.PORT || 3000}`;
+const BASE_URL = "http://localhost:3000";
 
 /**
  * Fetch all tournament game IDs from the scoreboard for the current tournament window.
