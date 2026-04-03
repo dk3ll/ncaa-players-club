@@ -97,6 +97,9 @@ function advancePick(room: DraftRoom) {
   room.timerExpiresAt = Date.now() + room.config.timerSeconds * 1000;
   saveRoom(room);
 
+  // Broadcast updated state so all clients see the new currentPickOwner
+  broadcastToRoom(room.roomCode, "state", getPublicState(room));
+
   // Schedule auto-pick
   const timer = setTimeout(() => autoPick(room), room.config.timerSeconds * 1000);
   autoPickTimers.set(room.roomCode, timer);
@@ -303,9 +306,9 @@ export function makePick(
     player,
   });
 
-  const state = getPublicState(room);
-  broadcastToRoom(roomCode, "pick", { state });
+  // Advance to next pick FIRST, then broadcast with updated state
   advancePick(room);
+  broadcastToRoom(roomCode, "pick", { state: getPublicState(room) });
   return { state: getPublicState(room) };
 }
 
