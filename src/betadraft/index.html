@@ -1,0 +1,791 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>NCAA Draft Room</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0a0e1a;color:#e8eaf0;min-height:100vh}
+header{background:linear-gradient(135deg,#1a237e,#0d47a1,#1565c0);padding:16px 24px;border-bottom:3px solid #f9a825;display:flex;align-items:center;justify-content:space-between}
+header h1{font-size:1.3rem;font-weight:800}
+header h1 span{color:#f9a825}
+.room-code{background:#f9a825;color:#0a0e1a;padding:4px 12px;border-radius:6px;font-weight:800;font-size:0.9rem;letter-spacing:1px}
+/* Screens */
+.screen{display:none;padding:24px;max-width:1400px;margin:0 auto}
+.screen.active{display:block}
+/* Join screen */
+#join-screen{max-width:500px;margin:80px auto;text-align:center}
+.join-card{background:#131929;border:1px solid #1e2d4a;border-radius:12px;padding:32px}
+.join-card h2{font-size:1.4rem;margin-bottom:24px}
+.join-card h2 span{color:#f9a825}
+.form-group{margin-bottom:16px;text-align:left}
+.form-group label{display:block;font-size:0.75rem;color:#78909c;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px}
+input,select{width:100%;background:#0a0e1a;border:1px solid #1e2d4a;color:#e8eaf0;padding:10px 14px;border-radius:6px;font-size:0.9rem}
+input:focus,select:focus{outline:none;border-color:#4fc3f7}
+.btn{background:#f9a825;color:#0a0e1a;border:none;padding:10px 24px;border-radius:6px;font-weight:700;cursor:pointer;font-size:0.9rem;width:100%;transition:background 0.2s}
+.btn:hover{background:#fbc02d}
+.btn:disabled{background:#555;color:#999;cursor:not-allowed}
+.btn-secondary{background:#1e2d4a;color:#90caf9}
+.btn-secondary:hover{background:#263850}
+.btn-danger{background:#b71c1c;color:#fff}
+.btn-danger:hover{background:#d32f2f}
+.btn-row{display:flex;gap:8px;margin-top:16px}
+.btn-row .btn{flex:1}
+.divider{border:none;border-top:1px solid #1e2d4a;margin:20px 0}
+.error-msg{color:#ef9a9a;font-size:0.8rem;margin-top:8px}
+</style>
+</head>
+<body>
+<header>
+<h1>🏀 NCAA <span>Draft Room</span></h1>
+<div id="header-info"></div>
+</header>
+
+<!-- JOIN / CREATE SCREEN -->
+<div id="join-screen" class="screen active">
+<div class="join-card">
+<h2>🏀 NCAA Player <span>Draft</span></h2>
+<div id="join-tab-btns" style="display:flex;gap:4px;margin-bottom:20px">
+<button class="btn btn-secondary" onclick="showJoinTab('join')" id="jt-join" style="flex:1;border-bottom:2px solid #f9a825">Join Draft</button>
+<button class="btn btn-secondary" onclick="showJoinTab('create')" id="jt-create" style="flex:1">Create Draft</button>
+</div>
+<div id="join-form">
+<div class="form-group"><label>Room Code</label><input id="j-room" placeholder="Enter room code" maxlength="6"/></div>
+<div class="form-group"><label>Your Name</label><input id="j-name" placeholder="Your name" maxlength="20"/></div>
+<div class="form-group"><label>Team Name</label><input id="j-team" placeholder="Your team name" maxlength="25"/></div>
+<button class="btn" onclick="doJoin()">Join Draft</button>
+<div id="j-error" class="error-msg"></div>
+</div>
+<!-- Registration step (shown before create form) -->
+<div id="register-form" style="display:none">
+<div style="font-size:0.85rem;color:#78909c;margin-bottom:16px;text-align:center">Register to get your access key</div>
+<div class="form-group"><label>First Name *</label><input id="r-fname" placeholder="First name" maxlength="30"/></div>
+<div class="form-group"><label>Last Name *</label><input id="r-lname" placeholder="Last name" maxlength="30"/></div>
+<div class="form-group"><label>Email Address *</label><input id="r-email" placeholder="email@example.com" type="email" maxlength="60"/></div>
+<div class="form-group"><label>Donation (optional — helps keep this running)</label><input id="r-donation" placeholder="$0.00" maxlength="10"/></div>
+<button class="btn" onclick="doRegister()" id="register-btn">Get Access Key</button>
+<div id="r-error" class="error-msg"></div>
+</div>
+<!-- Access key display (shown after registration) -->
+<div id="key-display" style="display:none">
+<div style="text-align:center;margin-bottom:16px">
+<div style="font-size:0.85rem;color:#69f0ae;margin-bottom:12px">✅ Registration complete</div>
+<div style="font-size:0.75rem;color:#78909c;margin-bottom:8px">Your access key:</div>
+<div id="generated-key" style="font-family:monospace;font-size:1.4rem;color:#f9a825;letter-spacing:2px;padding:12px;background:#0a0e1a;border:1px solid #1e2d4a;border-radius:6px;margin-bottom:12px"></div>
+<button class="btn btn-secondary" id="copy-key-btn" onclick="copyGeneratedKey()" style="margin-bottom:12px">📋 Copy Key</button>
+<div style="font-size:0.75rem;color:#ef9a9a">⚠️ Write this down or copy it — you'll need it to create your league</div>
+</div>
+<button class="btn" onclick="proceedToCreate()">Continue to Create League →</button>
+</div>
+<div id="create-form" style="display:none">
+<div class="form-group"><label>Access Key (provided by administrator)</label><input id="c-accesskey" placeholder="XXXX-XXXX-XXXX-XXXX" maxlength="19" style="font-family:monospace;letter-spacing:1px;text-transform:uppercase"/></div>
+<div class="form-group"><label>League Name</label><input id="c-league" placeholder="e.g. March Madness 2027" maxlength="40"/></div>
+<div class="form-group"><label>League Password (shared with participants after draft)</label><input id="c-password" type="password" placeholder="Set a password"/></div>
+<hr class="divider"/>
+<div class="form-group"><label>Your Name (Commissioner)</label><input id="c-name" placeholder="Your name" maxlength="20"/></div>
+<div class="form-group"><label>Team Name</label><input id="c-team" placeholder="Your team name" maxlength="25"/></div>
+<div class="form-group"><label>Max Teams (10-20)</label><input id="c-maxteams" type="number" value="12" min="10" max="20"/></div>
+<div class="form-group"><label>Rounds (10-20)</label><input id="c-rounds" type="number" value="12" min="10" max="20"/></div>
+<div class="form-group"><label>Pick Timer (seconds)</label><select id="c-timer">
+<option value="60">1 minute</option><option value="120" selected>2 minutes</option><option value="180">3 minutes</option><option value="240">4 minutes</option><option value="300">5 minutes</option>
+</select></div>
+<button class="btn" onclick="doCreate()" id="create-btn">Create Draft Room</button>
+<div id="c-error" class="error-msg"></div>
+</div>
+</div>
+</div>
+
+<!-- LOBBY SCREEN -->
+<div id="lobby-screen" class="screen">
+<div style="max-width:600px;margin:0 auto">
+<div class="join-card">
+<h2>Draft Lobby</h2>
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+<span style="color:#78909c;font-size:0.8rem">Room Code:</span>
+<span class="room-code" id="lobby-code"></span>
+</div>
+<div style="color:#78909c;font-size:0.8rem;margin-bottom:8px">Share this code with your friends to join</div>
+<hr class="divider"/>
+<div style="display:flex;justify-content:space-between;margin-bottom:8px">
+<span style="color:#78909c;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.8px">Teams Joined</span>
+<span id="lobby-count" style="color:#4fc3f7;font-size:0.8rem"></span>
+</div>
+<div id="lobby-teams" style="margin-bottom:16px"></div>
+<hr class="divider"/>
+<div id="lobby-config" style="font-size:0.8rem;color:#78909c;margin-bottom:16px"></div>
+<div id="lobby-admin"></div>
+</div>
+</div>
+</div>
+
+<!-- DRAFT BOARD SCREEN -->
+<div id="draft-screen" class="screen">
+<style>
+.draft-layout{display:grid;grid-template-columns:1fr 340px;gap:16px;min-height:calc(100vh - 140px)}
+.draft-main{display:flex;flex-direction:column;gap:12px}
+/* Timer bar */
+.timer-bar{background:#131929;border:1px solid #1e2d4a;border-radius:10px;padding:16px 20px;display:flex;align-items:center;gap:16px}
+.timer-pick-info{flex:1}
+.timer-pick-info .pick-label{font-size:0.7rem;color:#78909c;text-transform:uppercase;letter-spacing:0.8px}
+.timer-pick-info .pick-name{font-size:1.1rem;font-weight:800;color:#f9a825}
+.timer-clock{font-size:2rem;font-weight:900;font-variant-numeric:tabular-nums;min-width:80px;text-align:center}
+.timer-clock.urgent{color:#ef5350;animation:pulse 0.8s ease-in-out infinite}
+.timer-clock.paused{color:#78909c}
+.timer-round{font-size:0.8rem;color:#78909c;text-align:right}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+/* Draft tabs */
+.draft-tabs{display:flex;gap:4px}
+.draft-tab{background:#131929;border:1px solid #1e2d4a;border-radius:6px 6px 0 0;padding:8px 16px;font-size:0.8rem;font-weight:600;cursor:pointer;color:#78909c;border-bottom:none}
+.draft-tab.active{background:#1a2035;color:#f9a825;border-color:#f9a825;border-bottom:1px solid #1a2035}
+/* Player pool */
+.pool-panel{background:#131929;border:1px solid #1e2d4a;border-radius:0 10px 10px 10px;flex:1;display:flex;flex-direction:column;overflow:hidden}
+.pool-search{padding:12px;border-bottom:1px solid #1e2d4a}
+.pool-search input{width:100%;background:#0a0e1a;border:1px solid #1e2d4a;color:#e8eaf0;padding:8px 12px;border-radius:6px;font-size:0.85rem}
+.pool-table{flex:1;overflow-y:auto}
+.pool-table table{width:100%;border-collapse:collapse;font-size:0.82rem}
+.pool-table thead th{position:sticky;top:0;background:#0f1624;padding:8px 10px;text-align:left;color:#78909c;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.6px;cursor:pointer;border-bottom:1px solid #1e2d4a}
+.pool-table thead th:hover{color:#e8eaf0}
+.pool-table thead th.num{text-align:right}
+.pool-table tbody tr{border-bottom:1px solid #0a0e1a;transition:background 0.1s;cursor:pointer}
+.pool-table tbody tr:hover{background:#1a2035}
+.pool-table td{padding:8px 10px}
+.pool-table td.num{text-align:right}
+.pick-btn{background:#1b5e20;color:#69f0ae;border:none;padding:4px 12px;border-radius:4px;font-size:0.75rem;font-weight:700;cursor:pointer}
+.pick-btn:hover{background:#2e7d32}
+.pick-btn:disabled{background:#333;color:#666;cursor:not-allowed}
+/* Sidebar */
+.draft-sidebar{display:flex;flex-direction:column;gap:12px}
+.my-team-panel{background:#131929;border:1px solid #1e2d4a;border-radius:10px;flex:1;overflow:hidden;display:flex;flex-direction:column}
+.my-team-header{padding:12px 16px;border-bottom:1px solid #1e2d4a;font-weight:700;font-size:0.9rem;display:flex;justify-content:space-between}
+.my-team-list{flex:1;overflow-y:auto;padding:8px 0}
+.my-team-row{display:flex;align-items:center;gap:10px;padding:6px 16px;font-size:0.82rem}
+.my-team-row .pick-num{color:#546e7a;font-size:0.7rem;width:20px}
+.my-team-row .p-name{flex:1;font-weight:600}
+.my-team-row .p-team{color:#78909c;font-size:0.75rem}
+.my-team-row .p-ppg{color:#4fc3f7;font-weight:700;font-size:0.8rem}
+/* Master board */
+.master-panel{display:none}
+.master-panel.active{display:flex;flex-direction:column}
+.master-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;padding:12px;overflow-y:auto;flex:1}
+.master-team{background:#0f1624;border:1px solid #1e2d4a;border-radius:8px;overflow:hidden}
+.master-team-header{padding:8px 12px;background:#1a237e;font-weight:700;font-size:0.8rem;border-bottom:1px solid #1e2d4a}
+.master-team-header span{color:#78909c;font-weight:400;font-size:0.7rem}
+.master-player{padding:4px 12px;font-size:0.78rem;border-bottom:1px solid #0a0e1a;display:flex;justify-content:space-between}
+.master-player:last-child{border-bottom:none}
+.master-player .mp-team{color:#546e7a;font-size:0.7rem}
+/* Admin bar */
+.admin-bar{background:#131929;border:1px solid #1e2d4a;border-radius:10px;padding:10px 16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.admin-bar .btn{width:auto;padding:6px 14px;font-size:0.78rem}
+/* Status banner */
+.status-banner{background:#e65100;text-align:center;padding:8px;font-weight:700;font-size:0.85rem}
+.status-banner.paused{background:#b71c1c}
+.status-banner.complete{background:#1b5e20}
+/* Recent picks */
+.recent-picks{background:#131929;border:1px solid #1e2d4a;border-radius:10px;padding:10px 16px;max-height:320px;overflow-y:auto;transition:max-height 0.3s}
+.recent-picks.expanded{max-height:600px}
+.recent-picks .rp-title{font-size:0.7rem;color:#78909c;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px}
+.rp-row{display:flex;gap:8px;font-size:0.78rem;padding:3px 0;border-bottom:1px solid #0a0e1a}
+.rp-row:last-child{border-bottom:none}
+.rp-round{color:#546e7a;width:30px}
+.rp-owner{color:#f9a825;width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rp-player{flex:1;font-weight:600}
+.rp-team{color:#78909c}
+@media(max-width:800px){.draft-layout{grid-template-columns:1fr}.draft-sidebar{order:-1}}
+</style>
+
+<div id="status-banner" class="status-banner" style="display:none"></div>
+<div class="draft-layout" style="padding:0">
+<div class="draft-main">
+<!-- Timer -->
+<div class="timer-bar">
+<div class="timer-pick-info">
+<div class="pick-label">On the clock</div>
+<div class="pick-name" id="otc-name">—</div>
+</div>
+<div class="timer-clock" id="timer-clock">—</div>
+<div class="timer-round"><div id="round-label">—</div><div id="pick-label" style="font-size:0.7rem;color:#546e7a">—</div></div>
+</div>
+<!-- Admin bar (commissioner only) -->
+<div class="admin-bar" id="admin-bar" style="display:none">
+<span style="font-size:0.75rem;color:#78909c">Commissioner:</span>
+<button class="btn" id="admin-start" onclick="doStart()">Start Draft</button>
+<button class="btn btn-danger" id="admin-pause" onclick="doPause()" style="display:none">⏸ Pause</button>
+<button class="btn" id="admin-resume" onclick="doStart()" style="display:none">▶ Resume</button>
+</div>
+<!-- Tabs -->
+<div class="draft-tabs">
+<button class="draft-tab active" onclick="switchDraftTab('pool',this)">Player Pool</button>
+<button class="draft-tab" onclick="switchDraftTab('master',this)">All Teams</button>
+</div>
+<!-- Player Pool -->
+<div class="pool-panel" id="pool-panel">
+<div class="pool-search"><input id="pool-search" placeholder="Search players..." oninput="renderPool()"/></div>
+<div class="pool-table"><table><thead><tr>
+<th onclick="sortPool('name')">Player</th>
+<th onclick="sortPool('team')">Team</th>
+<th onclick="sortPool('position')">Pos</th>
+<th class="num" onclick="sortPool('ppg')">PPG</th>
+<th class="num" onclick="sortPool('rpg')">RPG</th>
+<th class="num" onclick="sortPool('apg')">APG</th>
+<th class="num" onclick="sortPool('fantasyScore')">Rank ▼</th>
+<th></th>
+</tr></thead><tbody id="pool-body"></tbody></table></div>
+</div>
+<!-- Master Board -->
+<div class="pool-panel master-panel" id="master-panel">
+<div class="master-grid" id="master-grid"></div>
+</div>
+</div>
+<!-- Sidebar -->
+<div class="draft-sidebar">
+<div class="recent-picks" id="recent-picks">
+<div class="rp-title">Recent Picks</div>
+<div id="rp-list">No picks yet</div>
+</div>
+<div class="my-team-panel">
+<div class="my-team-header"><span id="my-team-name">My Team</span><span id="my-team-count" style="color:#78909c;font-size:0.8rem">0 picks</span></div>
+<div class="my-team-list" id="my-team-list"></div>
+</div>
+</div>
+</div>
+</div>
+
+<style>
+.fb-btn{position:fixed;bottom:20px;right:20px;width:48px;height:48px;border-radius:50%;background:#f9a825;color:#0a0e1a;border:none;font-size:1.3rem;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,0.4);z-index:1000;transition:transform 0.2s}
+.fb-btn:hover{transform:scale(1.1)}
+.fb-modal{display:none;position:fixed;bottom:80px;right:20px;width:320px;background:#131929;border:1px solid #1e2d4a;border-radius:12px;padding:20px;z-index:1000;box-shadow:0 8px 30px rgba(0,0,0,0.5)}
+.fb-modal.open{display:block}
+.fb-modal h3{font-size:0.95rem;margin-bottom:12px}
+.fb-stars{display:flex;gap:4px;margin-bottom:12px}
+.fb-star{font-size:1.5rem;cursor:pointer;color:#1e2d4a;transition:color 0.1s}
+.fb-star.active{color:#f9a825}
+.fb-modal textarea{width:100%;background:#0a0e1a;border:1px solid #1e2d4a;color:#e8eaf0;padding:10px;border-radius:6px;font-size:0.85rem;resize:vertical;min-height:80px;font-family:inherit}
+.fb-modal textarea:focus{outline:none;border-color:#4fc3f7}
+.fb-success{color:#69f0ae;font-size:0.85rem;text-align:center;padding:20px}
+</style>
+<button class="fb-btn" onclick="toggleFeedback()" title="Send Feedback">💬</button>
+<div class="fb-modal" id="fb-modal">
+<h3>Send Feedback</h3>
+<div class="fb-stars" id="fb-stars"></div>
+<textarea id="fb-msg" placeholder="What's on your mind? Bugs, ideas, anything..."></textarea>
+<div style="margin-top:10px"><button class="btn" onclick="submitFeedback()" style="width:100%">Send</button></div>
+<div id="fb-success" class="fb-success" style="display:none">Thanks for your feedback! 🙏</div>
+</div>
+<script>
+let fbRating=0;
+function initStars(){const c=document.getElementById('fb-stars');c.innerHTML='';for(let i=1;i<=5;i++){const s=document.createElement('span');s.className='fb-star';s.textContent='★';s.onclick=()=>{fbRating=i;document.querySelectorAll('.fb-star').forEach((el,j)=>el.classList.toggle('active',j<i))};c.appendChild(s)}}
+initStars();
+function toggleFeedback(){document.getElementById('fb-modal').classList.toggle('open');document.getElementById('fb-success').style.display='none'}
+async function submitFeedback(){const msg=document.getElementById('fb-msg').value.trim();if(!msg){alert('Please enter a message');return}
+await fetch('/admin/api/feedback',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({page:location.pathname,message:msg,rating:fbRating||3})});
+document.getElementById('fb-msg').value='';fbRating=0;initStars();document.getElementById('fb-success').style.display='block';setTimeout(()=>toggleFeedback(),2000)}
+</script>
+<script>
+let sessionId = localStorage.getItem('draft-session');
+let currentRoomCode = localStorage.getItem('draft-room');
+let draftState = null;
+let poolSort = { key: 'fantasyScore', dir: -1 };
+let timerInterval = null;
+
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+}
+
+function showJoinTab(tab) {
+  document.getElementById('join-form').style.display = tab === 'join' ? 'block' : 'none';
+  document.getElementById('register-form').style.display = tab === 'create' ? 'block' : 'none';
+  document.getElementById('key-display').style.display = 'none';
+  document.getElementById('create-form').style.display = 'none';
+  document.getElementById('jt-join').style.borderBottom = tab === 'join' ? '2px solid #f9a825' : 'none';
+  document.getElementById('jt-create').style.borderBottom = tab === 'create' ? '2px solid #f9a825' : 'none';
+}
+
+let generatedKey = '';
+
+async function doRegister() {
+  const firstName = document.getElementById('r-fname').value.trim();
+  const lastName = document.getElementById('r-lname').value.trim();
+  const email = document.getElementById('r-email').value.trim();
+  const donation = document.getElementById('r-donation').value.trim();
+  if (!firstName || !lastName || !email) { document.getElementById('r-error').textContent = 'All fields except donation are required'; return; }
+  document.getElementById('register-btn').disabled = true;
+  document.getElementById('register-btn').textContent = 'Registering...';
+  try {
+    const res = await fetch('/betadraft/register', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ firstName, lastName, email, donation }) });
+    const data = await res.json();
+    if (data.error) { document.getElementById('r-error').textContent = data.error; return; }
+    generatedKey = data.accessKey;
+    document.getElementById('generated-key').textContent = generatedKey;
+    document.getElementById('register-form').style.display = 'none';
+    document.getElementById('key-display').style.display = 'block';
+  } catch(e) { document.getElementById('r-error').textContent = e.message; }
+  finally { document.getElementById('register-btn').disabled = false; document.getElementById('register-btn').textContent = 'Get Access Key'; }
+}
+
+function copyGeneratedKey() {
+  navigator.clipboard.writeText(generatedKey);
+  document.getElementById('copy-key-btn').textContent = '✅ Copied!';
+  setTimeout(() => document.getElementById('copy-key-btn').textContent = '📋 Copy Key', 2000);
+}
+
+function proceedToCreate() {
+  document.getElementById('key-display').style.display = 'none';
+  document.getElementById('create-form').style.display = 'block';
+  document.getElementById('c-accesskey').value = generatedKey;
+}
+
+async function doCreate() {
+  const name = document.getElementById('c-name').value.trim();
+  const teamName = document.getElementById('c-team').value.trim();
+  const leagueName = document.getElementById('c-league').value.trim();
+  const leaguePassword = document.getElementById('c-password').value.trim();
+  const accessKey = document.getElementById('c-accesskey').value.trim().toUpperCase();
+  const rounds = parseInt(document.getElementById('c-rounds').value);
+  const timerSeconds = parseInt(document.getElementById('c-timer').value);
+  const maxTeams = parseInt(document.getElementById('c-maxteams').value);
+  if (!name || !teamName || !leagueName || !leaguePassword || !accessKey) { document.getElementById('c-error').textContent = 'Fill in all fields including access key'; return; }
+  document.getElementById('create-btn').disabled = true;
+  document.getElementById('create-btn').textContent = 'Loading players...';
+  const progress = document.createElement('div');
+  progress.id = 'create-progress';
+  progress.style.cssText = 'margin-top:12px;font-size:0.8rem;color:#4fc3f7;text-align:center';
+  progress.innerHTML = '<div class="spinner" style="width:20px;height:20px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:8px"></div>Fetching player stats from NCAA... this takes 30-60 seconds';
+  document.getElementById('create-btn').parentNode.appendChild(progress);
+  try {
+    const res = await fetch('/betadraft/create', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ name, teamName, rounds, timerSeconds, maxTeams, leagueName, leaguePassword, accessKey }) });
+    const data = await res.json();
+    if (data.error) { document.getElementById('c-error').textContent = data.error; return; }
+    sessionId = data.sessionId;
+    localStorage.setItem('draft-session', sessionId);
+    currentRoomCode = data.roomCode;
+    localStorage.setItem('draft-room', currentRoomCode);
+    draftState = data.state;
+    enterDraft();
+  } catch(e) { document.getElementById('c-error').textContent = e.message; }
+  finally { document.getElementById('create-btn').disabled = false; document.getElementById('create-btn').textContent = 'Create Draft Room'; document.getElementById('create-progress')?.remove(); }
+}
+
+async function doJoin() {
+  const roomCode = document.getElementById('j-room').value.trim().toUpperCase();
+  const name = document.getElementById('j-name').value.trim();
+  const teamName = document.getElementById('j-team').value.trim();
+  if (!roomCode || !name || !teamName) { document.getElementById('j-error').textContent = 'Fill in all fields'; return; }
+  try {
+    const res = await fetch('/betadraft/join', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ roomCode, name, teamName }) });
+    const data = await res.json();
+    if (data.error) { document.getElementById('j-error').textContent = data.error; return; }
+    sessionId = data.sessionId;
+    localStorage.setItem('draft-session', sessionId);
+    currentRoomCode = data.roomCode;
+    localStorage.setItem('draft-room', currentRoomCode);
+    draftState = data.state;
+    enterDraft();
+  } catch(e) { document.getElementById('j-error').textContent = e.message; }
+}
+
+function enterDraft() {
+  if (!draftState) return;
+  if (draftState.status === 'lobby') { renderLobby(); showScreen('lobby-screen'); }
+  else { renderDraft(); showScreen('draft-screen'); }
+  connectSSE();
+}
+
+function connectSSE() {
+  const es = new EventSource('/betadraft/events/' + currentRoomCode);
+  es.addEventListener('state', e => { draftState = JSON.parse(e.data); updateAll(); });
+  es.addEventListener('status', e => { draftState = JSON.parse(e.data); updateAll(); });
+  es.addEventListener('pick', e => { const d = JSON.parse(e.data); draftState = d.state; updateAll(); });
+  es.addEventListener('autopick', e => { const d = JSON.parse(e.data); draftState = d.state; updateAll(); showAutopickNotice(d.ownerName); });
+  es.addEventListener('join', e => { fetch('/betadraft/state/' + currentRoomCode).then(r=>r.json()).then(s => { if (!s.error) { draftState = s; updateAll(); } }); });
+  es.onerror = () => { setTimeout(connectSSE, 3000); es.close(); };
+}
+
+function updateAll() {
+  if (!draftState) return;
+  if (draftState.status === 'lobby') { renderLobby(); showScreen('lobby-screen'); }
+  else if (draftState.status === 'complete') { renderDraft(); renderDraftComplete(); showScreen('draft-screen'); }
+  else { renderDraft(); showScreen('draft-screen'); }
+}
+</script>
+
+<script>
+function renderLobby() {
+  document.getElementById('lobby-code').textContent = draftState.roomCode;
+  document.getElementById('lobby-count').textContent = `${draftState.owners.length} / ${draftState.config.maxTeams}`;
+  const teams = draftState.owners.map((o, i) => `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #0f1624">
+    <div style="width:28px;height:28px;border-radius:50%;background:#1e2d4a;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:0.8rem;color:#90caf9">${i+1}</div>
+    <div style="flex:1"><div style="font-weight:700;font-size:0.9rem">${o.name}${o.id === draftState.commissionerId ? ' 👑' : ''}</div><div style="font-size:0.75rem;color:#78909c">${o.teamName}</div></div>
+    ${o.id === sessionId ? '<span style="font-size:0.7rem;color:#69f0ae">You</span>' : ''}
+  </div>`).join('');
+  document.getElementById('lobby-teams').innerHTML = teams;
+  document.getElementById('lobby-config').innerHTML = `Rounds: ${draftState.config.rounds} · Timer: ${draftState.config.timerSeconds/60}min · Max Teams: ${draftState.config.maxTeams} · Players: ${draftState.playerPoolCount}`;
+
+  const isCommissioner = sessionId === draftState.commissionerId;
+
+  // Share button
+  const shareMsg = `🏀 Join my NCAA Draft!\n\nRoom Code: ${draftState.roomCode}\nJoin here: ${location.origin}/betadraft\n\nEnter the room code after clicking the link.`;
+  const shareBtn = `<button class="btn btn-secondary" style="margin-bottom:12px" onclick="navigator.clipboard.writeText(\`${shareMsg.replace(/`/g,'\\`')}\`);this.textContent='✅ Copied!';setTimeout(()=>this.textContent='📋 Share Invite Link',2000)">📋 Share Invite Link</button>`;
+
+  let adminHtml = '';
+  if (isCommissioner) {
+    adminHtml = `
+      ${shareBtn}
+      <div style="margin-bottom:12px">
+        <label style="display:flex;align-items:center;gap:8px;font-size:0.85rem;cursor:pointer">
+          <input type="checkbox" id="manual-order-flag" onchange="toggleManualOrder()" style="width:16px;height:16px"/>
+          Set draft order manually (uncheck to randomize)
+        </label>
+      </div>
+      <div id="manual-order-section" style="display:none;margin-bottom:12px">
+        <div style="font-size:0.75rem;color:#78909c;margin-bottom:6px">Drag to reorder or use the numbers:</div>
+        <div id="order-list">${draftState.owners.map((o, i) => `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #0f1624">
+          <input type="number" min="1" max="${draftState.owners.length}" value="${i+1}" style="width:40px;background:#0a0e1a;border:1px solid #1e2d4a;color:#e8eaf0;padding:4px;border-radius:4px;text-align:center;font-size:0.8rem" data-owner-id="${o.id}"/>
+          <span style="font-size:0.85rem">${o.name} — ${o.teamName}</span>
+        </div>`).join('')}</div>
+        <button class="btn btn-secondary" style="margin-top:8px;font-size:0.8rem" onclick="saveManualOrder()">Save Order</button>
+      </div>
+      <button class="btn" onclick="doStart()" ${draftState.owners.length < 2 ? 'disabled title="Need at least 2 teams"' : ''}>Start Draft</button>
+    `;
+  } else {
+    adminHtml = `${shareBtn}<div style="text-align:center;color:#78909c;font-size:0.85rem">Waiting for commissioner to start...</div>`;
+  }
+  document.getElementById('lobby-admin').innerHTML = adminHtml;
+}
+
+async function doStart() {
+  // If manual order is set, save it first
+  const manualFlag = document.getElementById('manual-order-flag');
+  if (manualFlag?.checked) {
+    await saveManualOrder();
+  }
+  const res = await fetch('/betadraft/start', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ sessionId, roomCode: currentRoomCode }) });
+  const data = await res.json();
+  if (data.error) alert(data.error);
+}
+
+function toggleManualOrder() {
+  const checked = document.getElementById('manual-order-flag').checked;
+  document.getElementById('manual-order-section').style.display = checked ? 'block' : 'none';
+}
+
+async function saveManualOrder() {
+  const inputs = document.querySelectorAll('#order-list input[data-owner-id]');
+  const ordered = [...inputs].map(inp => ({ id: inp.dataset.ownerId, pos: parseInt(inp.value) }))
+    .sort((a, b) => a.pos - b.pos).map(x => x.id);
+  await fetch('/betadraft/order', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ sessionId, order: ordered, roomCode: currentRoomCode }) });
+}
+
+// Audio notification for your turn
+let lastNotifiedPick = -1;
+function playTurnSound() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.frequency.value = 880;
+    osc.type = 'sine';
+    gain.gain.value = 0.3;
+    osc.start();
+    osc.stop(ctx.currentTime + 0.15);
+    setTimeout(() => {
+      const osc2 = ctx.createOscillator();
+      const gain2 = ctx.createGain();
+      osc2.connect(gain2);
+      gain2.connect(ctx.destination);
+      osc2.frequency.value = 1100;
+      osc2.type = 'sine';
+      gain2.gain.value = 0.3;
+      osc2.start();
+      osc2.stop(ctx.currentTime + 0.2);
+    }, 180);
+  } catch(_) {}
+}
+
+async function doPause() {
+  const res = await fetch('/betadraft/pause', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ sessionId, roomCode: currentRoomCode }) });
+  const data = await res.json();
+  if (data.error) alert(data.error);
+}
+
+function renderDraft() {
+  const s = draftState;
+  const isCommissioner = sessionId === s.commissionerId;
+  const isMyTurn = s.currentPickOwner === sessionId;
+  const currentOwner = s.owners.find(o => o.id === s.currentPickOwner);
+
+  // Header info
+  document.getElementById('header-info').innerHTML = `<span class="room-code">${s.roomCode}</span>`;
+
+  // Status banner
+  const banner = document.getElementById('status-banner');
+  if (s.status === 'paused') { banner.style.display = 'block'; banner.className = 'status-banner paused'; banner.textContent = '⏸ DRAFT PAUSED'; }
+  else if (s.status === 'complete') {
+    banner.style.display = 'block'; banner.className = 'status-banner complete';
+    if (s.leagueId) {
+      banner.innerHTML = '✅ DRAFT COMPLETE — League dashboard: <a href="/league/' + s.leagueId + '" style="color:#fff;text-decoration:underline;font-weight:800">/league/' + s.leagueId + '</a>';
+    } else {
+      banner.textContent = '✅ DRAFT COMPLETE';
+    }
+  }
+  else { banner.style.display = 'none'; }
+
+  // Timer
+  document.getElementById('otc-name').textContent = currentOwner ? `${currentOwner.name} — ${currentOwner.teamName}` : '—';
+  document.getElementById('otc-name').style.color = isMyTurn ? '#69f0ae' : '#f9a825';
+  if (isMyTurn) document.getElementById('otc-name').textContent += ' (YOUR PICK!)';
+  document.getElementById('round-label').textContent = `Round ${s.currentRound} of ${s.config.rounds}`;
+  const totalPicks = s.draftOrder.length * s.config.rounds;
+  document.getElementById('pick-label').textContent = `Pick ${s.currentPick + 1} of ${totalPicks}`;
+  updateTimer();
+
+  // Admin bar
+  const adminBar = document.getElementById('admin-bar');
+  if (isCommissioner) {
+    adminBar.style.display = 'flex';
+    document.getElementById('admin-start').style.display = s.status === 'lobby' ? 'inline-block' : 'none';
+    document.getElementById('admin-pause').style.display = s.status === 'active' ? 'inline-block' : 'none';
+    document.getElementById('admin-resume').style.display = s.status === 'paused' ? 'inline-block' : 'none';
+  } else { adminBar.style.display = 'none'; }
+
+  renderPool();
+  renderMyTeam();
+  renderRecentPicks();
+  renderMasterBoard();
+}
+
+function updateTimer() {
+  if (timerInterval) clearInterval(timerInterval);
+  const clock = document.getElementById('timer-clock');
+  const timerBar = document.querySelector('.timer-bar');
+  if (!draftState || draftState.status !== 'active' || !draftState.timerExpiresAt) {
+    clock.textContent = draftState?.status === 'paused' ? 'PAUSED' : draftState?.status === 'complete' ? 'DONE' : '—';
+    clock.className = 'timer-clock' + (draftState?.status === 'paused' ? ' paused' : '');
+    timerBar.style.borderColor = '#1e2d4a';
+    return;
+  }
+
+  // Play sound if it's your turn and we haven't notified for this pick
+  const isMyTurn = draftState.currentPickOwner === sessionId;
+  if (isMyTurn && draftState.currentPick !== lastNotifiedPick) {
+    lastNotifiedPick = draftState.currentPick;
+    playTurnSound();
+  }
+
+  timerInterval = setInterval(() => {
+    const remaining = Math.max(0, Math.ceil((draftState.timerExpiresAt - Date.now()) / 1000));
+    const min = Math.floor(remaining / 60);
+    const sec = remaining % 60;
+    clock.textContent = `${min}:${String(sec).padStart(2, '0')}`;
+
+    if (remaining <= 20) {
+      clock.className = 'timer-clock urgent';
+      timerBar.style.borderColor = '#ef5350';
+      timerBar.style.boxShadow = '0 0 20px rgba(239,83,80,0.3)';
+      if (remaining <= 10) {
+        document.title = `⚠️ ${remaining}s — NCAA Draft`;
+      }
+    } else {
+      clock.className = 'timer-clock';
+      timerBar.style.borderColor = '#1e2d4a';
+      timerBar.style.boxShadow = 'none';
+      document.title = 'NCAA Draft Room';
+    }
+    if (remaining <= 0) { clearInterval(timerInterval); clock.textContent = 'AUTO-PICKING...'; }
+  }, 200);
+}
+
+function sortPool(key) {
+  if (poolSort.key === key) poolSort.dir *= -1;
+  else { poolSort.key = key; poolSort.dir = key === 'ppg' ? -1 : 1; }
+  renderPool();
+}
+
+function renderPool() {
+  if (!draftState) return;
+  const search = (document.getElementById('pool-search')?.value || '').toLowerCase();
+  let pool = [...(draftState.playerPool || [])];
+  if (search) pool = pool.filter(p => p.name.toLowerCase().includes(search) || p.team.toLowerCase().includes(search));
+  pool.sort((a, b) => { const av = a[poolSort.key], bv = b[poolSort.key]; if (typeof av === 'string') return av.localeCompare(bv) * poolSort.dir; return (av - bv) * poolSort.dir; });
+
+  const isMyTurn = draftState.currentPickOwner === sessionId;
+  const isCommissioner = sessionId === draftState.commissionerId;
+  const canPick = isMyTurn && draftState.status === 'active';
+
+  document.getElementById('pool-body').innerHTML = pool.map(p => `<tr>
+    <td>${p.name}</td><td>${p.team}</td><td>${p.position || '—'}</td>
+    <td class="num" style="font-weight:700;color:#4fc3f7">${p.ppg}</td>
+    <td class="num">${p.rpg}</td>
+    <td class="num">${p.apg}</td>
+    <td class="num" style="font-weight:700;color:#f9a825">${p.fantasyScore}</td>
+    <td><button class="pick-btn" ${canPick ? `onclick="doPick(${p.id})"` : 'disabled'}>Draft</button></td>
+  </tr>`).join('');
+
+  // Update sort indicators in headers
+  document.querySelectorAll('.pool-table thead th').forEach(th => {
+    const text = th.textContent.replace(/ [▲▼]/g, '');
+    const key = th.getAttribute('onclick')?.match(/sortPool\('(\w+)'\)/)?.[1];
+    if (key === poolSort.key) th.textContent = text + (poolSort.dir === -1 ? ' ▼' : ' ▲');
+    else th.textContent = text;
+  });
+}
+
+async function doPick(playerId) {
+  const res = await fetch('/betadraft/pick', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ sessionId, playerId, roomCode: currentRoomCode }) });
+  const data = await res.json();
+  if (data.error) alert(data.error);
+}
+
+function renderMyTeam() {
+  const me = draftState.owners.find(o => o.id === sessionId);
+  if (!me) return;
+  document.getElementById('my-team-name').innerHTML = `${me.name} <span style="color:#78909c;font-weight:400;font-size:0.8rem">— ${me.teamName}</span>`;
+  document.getElementById('my-team-count').textContent = `${me.picks.length} picks`;
+  document.getElementById('my-team-list').innerHTML = me.picks.length === 0
+    ? '<div style="padding:16px;color:#546e7a;font-size:0.82rem;text-align:center">No picks yet</div>'
+    : me.picks.map((p, i) => `<div class="my-team-row"><span class="pick-num">${i+1}</span><span class="p-name">${p.name}</span><span class="p-team">${p.team}</span><span class="p-ppg">${p.fantasyScore ?? p.ppg}</span></div>`).join('');
+}
+
+function renderRecentPicks() {
+  const picks = (draftState.picks || []).slice().reverse();
+  const showAll = document.getElementById('recent-picks')?.classList.contains('expanded');
+  const visible = showAll ? picks : picks.slice(0, 10);
+  const hasMore = picks.length > 10;
+  document.getElementById('rp-list').innerHTML = picks.length === 0 ? 'No picks yet'
+    : visible.map(p => { const o = draftState.owners.find(x => x.id === p.ownerId); return `<div class="rp-row"><span class="rp-round">R${p.round}</span><span class="rp-owner">${o?.name || '?'}</span><span class="rp-player">${p.player.name}</span><span class="rp-team">${p.player.team}</span></div>`; }).join('')
+    + (hasMore ? `<div style="text-align:center;padding:6px"><button class="btn btn-secondary" style="width:auto;padding:4px 12px;font-size:0.72rem" onclick="toggleRecentPicks()">${showAll ? 'Show Less' : `Show All (${picks.length})`}</button></div>` : '');
+}
+
+function toggleRecentPicks() {
+  document.getElementById('recent-picks').classList.toggle('expanded');
+  renderRecentPicks();
+}
+
+function renderMasterBoard() {
+  const grid = document.getElementById('master-grid');
+  grid.innerHTML = draftState.draftOrder.map(oid => {
+    const o = draftState.owners.find(x => x.id === oid);
+    if (!o) return '';
+    const players = o.picks.map(p => `<div class="master-player"><span>${p.name}</span><span class="mp-team">${p.team}</span></div>`).join('');
+    return `<div class="master-team"><div class="master-team-header">${o.name} <span>— ${o.teamName}</span></div>${players || '<div style="padding:8px 12px;color:#546e7a;font-size:0.75rem">No picks</div>'}</div>`;
+  }).join('');
+}
+
+function switchDraftTab(tab, btn) {
+  document.querySelectorAll('.draft-tab').forEach(t => t.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('pool-panel').style.display = tab === 'pool' ? 'flex' : 'none';
+  document.getElementById('pool-panel').classList.toggle('active', tab === 'pool');
+  document.getElementById('master-panel').style.display = tab === 'master' ? 'flex' : 'none';
+  document.getElementById('master-panel').classList.toggle('active', tab === 'master');
+}
+
+function showAutopickNotice(ownerName) {
+  const banner = document.getElementById('status-banner');
+  banner.style.display = 'block';
+  banner.className = 'status-banner';
+  banner.style.background = '#e65100';
+  banner.textContent = `⏰ Auto-pick: ${ownerName} ran out of time — highest ranked player was selected`;
+  setTimeout(() => { if (draftState?.status === 'active') banner.style.display = 'none'; }, 5000);
+}
+
+function renderDraftComplete() {
+  const s = draftState;
+  const isCommissioner = sessionId === s.commissionerId;
+
+  let summaryHtml = '<div style="max-width:900px;margin:0 auto;padding:24px">';
+  summaryHtml += '<h2 style="text-align:center;font-size:1.5rem;margin-bottom:8px">🏀 Draft Complete</h2>';
+  summaryHtml += `<p style="text-align:center;color:#78909c;margin-bottom:24px">${s.config.leagueName}</p>`;
+
+  // Summary table for each team
+  for (const oid of s.draftOrder) {
+    const o = s.owners.find(x => x.id === oid);
+    if (!o) continue;
+    summaryHtml += `<div style="background:#131929;border:1px solid #1e2d4a;border-radius:10px;margin-bottom:16px;overflow:hidden">`;
+    summaryHtml += `<div style="padding:12px 16px;background:#1a237e;font-weight:700">${o.name} <span style="color:#78909c;font-weight:400">— ${o.teamName}</span></div>`;
+    summaryHtml += `<table style="width:100%;border-collapse:collapse;font-size:0.82rem"><thead><tr><th style="text-align:left;padding:6px 12px;color:#78909c;font-size:0.7rem">#</th><th style="text-align:left;padding:6px 12px;color:#78909c;font-size:0.7rem">Player</th><th style="text-align:left;padding:6px 12px;color:#78909c;font-size:0.7rem">Team</th><th style="text-align:right;padding:6px 12px;color:#78909c;font-size:0.7rem">Rank</th></tr></thead><tbody>`;
+    o.picks.forEach((p, i) => {
+      summaryHtml += `<tr style="border-bottom:1px solid #0a0e1a"><td style="padding:6px 12px;color:#546e7a">${i+1}</td><td style="padding:6px 12px">${p.name}</td><td style="padding:6px 12px;color:#78909c">${p.team}</td><td style="padding:6px 12px;text-align:right;color:#f9a825;font-weight:700">${p.fantasyScore ?? ''}</td></tr>`;
+    });
+    summaryHtml += '</tbody></table></div>';
+  }
+
+  // Download button
+  summaryHtml += `<div style="display:flex;gap:12px;justify-content:center;margin-top:24px;flex-wrap:wrap">`;
+  summaryHtml += `<button class="btn btn-secondary" onclick="downloadSummary()">📥 Download Summary</button>`;
+  if (isCommissioner) {
+    if (!s.leagueId) {
+      summaryHtml += `<button class="btn" onclick="submitLeague()">✅ Approve & Create Standings Page</button>`;
+    } else {
+      summaryHtml += `<a class="btn" href="/league/${s.leagueId}" target="_blank" style="text-decoration:none;text-align:center">🔗 View Standings Page</a>`;
+    }
+  }
+  summaryHtml += `</div>`;
+
+  if (!isCommissioner && !s.leagueId) {
+    summaryHtml += `<div style="text-align:center;margin-top:16px;padding:12px;background:#1e2d4a;border-radius:8px;color:#90caf9;font-size:0.9rem">Your commissioner is reviewing the results and will build the standings page shortly.</div>`;
+  }
+
+  if (s.leagueId) {
+    summaryHtml += `<div style="text-align:center;margin-top:16px;padding:12px;background:#1b5e20;border-radius:8px">Standings page is live: <a href="/league/${s.leagueId}" style="color:#fff;font-weight:700;text-decoration:underline">/league/${s.leagueId}</a></div>`;
+  }
+
+  summaryHtml += `<div style="text-align:center;margin-top:24px"><button class="btn btn-secondary" onclick="startNewDraft()">🔄 Start New Draft</button></div>`;
+
+  summaryHtml += '</div>';
+
+  // Show in the draft screen area
+  document.querySelector('.draft-layout').innerHTML = summaryHtml;
+}
+
+function downloadSummary() {
+  const s = draftState;
+  let text = `${s.config.leagueName} — Draft Results\n${'='.repeat(40)}\n\n`;
+  for (const oid of s.draftOrder) {
+    const o = s.owners.find(x => x.id === oid);
+    if (!o) continue;
+    text += `${o.name} — ${o.teamName}\n${'-'.repeat(30)}\n`;
+    o.picks.forEach((p, i) => { text += `  ${i+1}. ${p.name} (${p.team})\n`; });
+    text += '\n';
+  }
+  const blob = new Blob([text], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `${s.config.leagueName.replace(/[^a-z0-9]/gi, '-')}-draft-results.txt`;
+  a.click();
+}
+
+async function submitLeague() {
+  const res = await fetch('/betadraft/finalize', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ sessionId, roomCode: currentRoomCode }) });
+  const data = await res.json();
+  if (data.error) { alert(data.error); return; }
+  draftState = data.state;
+  renderDraftComplete();
+}
+
+function startNewDraft() {
+  localStorage.removeItem('draft-session');
+  localStorage.removeItem('draft-room');
+  sessionId = null;
+  currentRoomCode = null;
+  draftState = null;
+  showScreen('join-screen');
+}
+
+// On load, check for existing session
+(async function init() {
+  if (sessionId && currentRoomCode) {
+    try {
+      const res = await fetch('/betadraft/state/' + currentRoomCode);
+      const data = await res.json();
+      if (!data.error && data.owners?.find(o => o.id === sessionId)) { draftState = data; enterDraft(); return; }
+    } catch(_) {}
+  }
+  showScreen('join-screen');
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,1099 @@
+import { getSemaphore } from "@henrygd/semaphore";
+import { Elysia, NotFoundError, t } from "elysia";
+import ExpiryMap from "expiry-map";
+import { readFileSync } from "fs";
+import { parseHTML } from "linkedom";
+import { join } from "path";
+import { addFeedback, authenticate, getAdminDashboardData, isAuthenticated } from "./admin/admin";
+import {
+  addSSEClient,
+  createRoom,
+  finalizeDraft,
+  getLeagueData,
+  getRoomState,
+  joinRoom,
+  makePick,
+  pauseDraft,
+  registerUser,
+  removeSSEClient,
+  setDraftOrder,
+  startDraft,
+} from "./betadraft/draftroom";
+import {
+  boxscoreHashes,
+  type DivisionKey,
+  doesSupportScoreboardNewApi,
+  getDivisionCode,
+  getScheduleBySportAndDivision,
+  getSeasonYear,
+  newCodesBySport,
+  playByPlayHashes,
+  teamStatsHashes,
+} from "./codes";
+import { buildDashboardStats } from "./dashboard/dashboard";
+import { openapiSpec } from "./openapi";
+import {
+  convertToOldFormat,
+  fetchGqlScoreboard,
+  fetchPlayoffScoreboard,
+} from "./scoreboard/scoreboard";
+import type { NewScoreboardParams } from "./scoreboard/types";
+
+// 30 minute cache for most routes
+const cache_30m = new ExpiryMap(30 * 60 * 1000);
+
+// 45 second cache for scores
+const cache_45s = new ExpiryMap(1 * 45 * 1000);
+
+// 5 minute cache for brackets
+// const cache_5m = new ExpiryMap(5 * 60 * 1000);
+
+// valid routes for the app with their respective caches
+const validRoutes = new Map([
+  ["stats", cache_30m],
+  ["rankings", cache_30m],
+  ["standings", cache_30m],
+  ["history", cache_30m],
+  ["schedule", cache_30m],
+  ["schools-index", cache_30m],
+  ["game", cache_45s],
+  ["scoreboard", cache_45s],
+  ["schedule-alt", cache_30m],
+  ["news", cache_30m],
+  ["brackets", cache_45s], // make this 45s during the tournament
+]);
+
+// 2 minute cache for dashboard stats
+const cache_2m = new ExpiryMap(2 * 60 * 1000);
+
+/** log message to console with timestamp */
+function log(str: string) {
+  console.log(`[${new Date().toISOString().substring(0, 19).replace("T", " ")}] ${str}`);
+}
+
+//////////////////////////////////////////////////////////////////////////////
+//////////////////////////////// ELYSIA //////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////
+
+export const app = new Elysia()
+  .use(openapiSpec)
+  .onError(({ error, code }) => {
+    if (code === "VALIDATION") return error.detail(error.message);
+  })
+  // Dashboard HTML page
+  .get(
+    "/dashboard",
+    ({ set }) => {
+      set.headers["Content-Type"] = "text/html";
+      const htmlPath = join(import.meta.dir, "dashboard/index.html");
+      try {
+        return readFileSync(htmlPath, "utf-8");
+      } catch {
+        // fallback path for compiled binary deployment
+        return readFileSync("src/dashboard/index.html", "utf-8");
+      }
+    },
+    { detail: { hide: true } }
+  )
+  // Dashboard stats API — fetches live player points from tournament games
+  .get(
+    "/dashboard/stats",
+    async ({ set }) => {
+      set.headers["Content-Type"] = "application/json";
+      if (cache_2m.has("dashboard-stats")) {
+        return cache_2m.get("dashboard-stats");
+      }
+      const stats = await buildDashboardStats();
+      const data = JSON.stringify(stats);
+      cache_2m.set("dashboard-stats", data);
+      return data;
+    },
+    { detail: { hide: true } }
+  )
+  // ---- BETADRAFT ROUTES ----
+  .get(
+    "/betadraft",
+    ({ set }) => {
+      set.headers["Content-Type"] = "text/html";
+      try {
+        return readFileSync(join(import.meta.dir, "betadraft/index.html"), "utf-8");
+      } catch {
+        return readFileSync("src/betadraft/index.html", "utf-8");
+      }
+    },
+    { detail: { hide: true } }
+  )
+  .post(
+    "/betadraft/register",
+    async ({ body, set }) => {
+      set.headers["Content-Type"] = "application/json";
+      const { firstName, lastName, email, donation } = body as any;
+      return JSON.stringify(registerUser(firstName, lastName, email, donation));
+    },
+    { detail: { hide: true } }
+  )
+  .post(
+    "/betadraft/create",
+    async ({ body, set }) => {
+      set.headers["Content-Type"] = "application/json";
+      const b = body as any;
+      const result = await createRoom(b);
+      return JSON.stringify(result);
+    },
+    { detail: { hide: true } }
+  )
+  .post(
+    "/betadraft/join",
+    async ({ body, set }) => {
+      set.headers["Content-Type"] = "application/json";
+      const { roomCode, name, teamName } = body as any;
+      return JSON.stringify(joinRoom(roomCode, name, teamName));
+    },
+    { detail: { hide: true } }
+  )
+  .post(
+    "/betadraft/start",
+    async ({ body, set }) => {
+      set.headers["Content-Type"] = "application/json";
+      const { sessionId, roomCode } = body as any;
+      return JSON.stringify(startDraft(sessionId, roomCode));
+    },
+    { detail: { hide: true } }
+  )
+  .post(
+    "/betadraft/pause",
+    async ({ body, set }) => {
+      set.headers["Content-Type"] = "application/json";
+      const { sessionId, roomCode } = body as any;
+      return JSON.stringify(pauseDraft(sessionId, roomCode));
+    },
+    { detail: { hide: true } }
+  )
+  .post(
+    "/betadraft/order",
+    async ({ body, set }) => {
+      set.headers["Content-Type"] = "application/json";
+      const { sessionId, order, roomCode } = body as any;
+      return JSON.stringify(setDraftOrder(sessionId, roomCode, order));
+    },
+    { detail: { hide: true } }
+  )
+  .post(
+    "/betadraft/pick",
+    async ({ body, set }) => {
+      set.headers["Content-Type"] = "application/json";
+      const { sessionId, playerId, roomCode } = body as any;
+      return JSON.stringify(makePick(sessionId, roomCode, playerId));
+    },
+    { detail: { hide: true } }
+  )
+  .post(
+    "/betadraft/finalize",
+    async ({ body, set }) => {
+      set.headers["Content-Type"] = "application/json";
+      const { sessionId, roomCode } = body as any;
+      return JSON.stringify(finalizeDraft(sessionId, roomCode));
+    },
+    { detail: { hide: true } }
+  )
+  .get(
+    "/betadraft/state/:code",
+    ({ params: { code }, set }) => {
+      set.headers["Content-Type"] = "application/json";
+      return JSON.stringify(getRoomState(code));
+    },
+    { detail: { hide: true } }
+  )
+  .get(
+    "/betadraft/events/:code",
+    ({ params: { code }, set, request }) => {
+      set.headers["Content-Type"] = "text/event-stream";
+      set.headers["Cache-Control"] = "no-cache";
+      set.headers.Connection = "keep-alive";
+      const stream = new ReadableStream({
+        start(controller) {
+          const client = {
+            send(event: string, data: unknown) {
+              controller.enqueue(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+            },
+          };
+          addSSEClient(code, client);
+          // Send current state immediately
+          client.send("state", getRoomState(code));
+          // Cleanup on close
+          request.signal.addEventListener("abort", () => removeSSEClient(code, client));
+        },
+      });
+      return new Response(stream, {
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+        },
+      });
+    },
+    { detail: { hide: true } }
+  )
+  // ---- LEAGUE ROUTE ----
+  .get(
+    "/league/:id",
+    ({ params: { id }, set }) => {
+      const data = getLeagueData(id);
+      if (!data) {
+        set.status = 404;
+        return "League not found";
+      }
+      set.headers["Content-Type"] = "application/json";
+      return JSON.stringify(data);
+    },
+    { detail: { hide: true } }
+  )
+  // ---- ADMIN ROUTES ----
+  .get(
+    "/admin",
+    ({ set, request }) => {
+      set.headers["Content-Type"] = "text/html";
+      const cookie = request.headers.get("cookie");
+      if (isAuthenticated(cookie)) {
+        try {
+          return readFileSync(join(import.meta.dir, "admin/dashboard.html"), "utf-8");
+        } catch {
+          return readFileSync("src/admin/dashboard.html", "utf-8");
+        }
+      }
+      try {
+        return readFileSync(join(import.meta.dir, "admin/index.html"), "utf-8");
+      } catch {
+        return readFileSync("src/admin/index.html", "utf-8");
+      }
+    },
+    { detail: { hide: true } }
+  )
+  .post(
+    "/admin/auth",
+    async ({ body, set }) => {
+      set.headers["Content-Type"] = "application/json";
+      const { username, password } = body as any;
+      const result = authenticate(username, password);
+      if ("token" in result) {
+        set.headers["Set-Cookie"] =
+          `admin_token=${result.token}; Path=/; HttpOnly; SameSite=Strict`;
+        return JSON.stringify({ ok: true });
+      }
+      return JSON.stringify(result);
+    },
+    { detail: { hide: true } }
+  )
+  .get(
+    "/admin/logout",
+    ({ set }) => {
+      set.headers["Set-Cookie"] = "admin_token=; Path=/; HttpOnly; Max-Age=0";
+      set.redirect = "/admin";
+    },
+    { detail: { hide: true } }
+  )
+  .get(
+    "/admin/api/data",
+    ({ set, request }) => {
+      const cookie = request.headers.get("cookie");
+      if (!isAuthenticated(cookie)) {
+        set.status = 401;
+        set.headers["Content-Type"] = "application/json";
+        return JSON.stringify({ error: "Not authenticated" });
+      }
+      set.headers["Content-Type"] = "application/json";
+      return JSON.stringify(getAdminDashboardData());
+    },
+    { detail: { hide: true } }
+  )
+  .post(
+    "/admin/api/feedback",
+    async ({ body, set, request }) => {
+      set.headers["Content-Type"] = "application/json";
+      const { page, message, rating } = body as any;
+      if (!message) return JSON.stringify({ error: "Message required" });
+      addFeedback({ page: page || "/", message, rating: rating || 3 });
+      return JSON.stringify({ ok: true });
+    },
+    { detail: { hide: true } }
+  )
+  // redirect index to github page
+  .get("/", ({ redirect }) => redirect("/openapi"), { detail: { hide: true } })
+  // fetch and return logo svg
+  .get(
+    "/logo/:school",
+    async ({ params: { school }, query: { dark }, set, status }) => {
+      const bgParam = dark !== undefined && dark !== "false" ? "bgd" : "bgl";
+      const url = `https://www.ncaa.com/sites/default/files/images/logos/schools/${bgParam}/${school.replace(".svg", "")}.svg`;
+      const res = await fetch(url);
+
+      if (!res.ok) {
+        return status(404, "Logo not found");
+      }
+
+      try {
+        const svgContent = await res.text();
+        set.headers["Content-Type"] = "image/svg+xml";
+        set.headers["Cache-Control"] = "public, max-age=604800";
+        return svgContent;
+      } catch (_) {
+        return status(500, "Error fetching data");
+      }
+    },
+    { detail: { hide: true } }
+  )
+  // validate request / set cache key
+  .resolve(({ request, path, query: { page }, status }) => {
+    // validate custom header value
+    if (
+      process.env.NCAA_HEADER_KEY &&
+      request.headers.get("x-ncaa-key") !== process.env.NCAA_HEADER_KEY
+    ) {
+      return status(401);
+    }
+    // check that page param is an int
+    if (page && !/^\d+$/.test(page)) {
+      return status(400, "Page parameter must be an integer");
+    }
+    // check that resource is valid
+    const basePath = path.split("/")[1];
+    if (!validRoutes.has(basePath)) {
+      return status(400, "Invalid resource");
+    }
+    return {
+      basePath,
+      cache: validRoutes.get(basePath) ?? cache_45s,
+      cacheKey: path + (page ?? ""),
+    };
+  })
+  .onBeforeHandle(({ set, cache, cacheKey }) => {
+    set.headers["Content-Type"] = "application/json";
+    set.headers["Cache-Control"] = `public, max-age=${cache === cache_45s ? 60 : 1800}`;
+    if (cache.has(cacheKey)) {
+      return cache.get(cacheKey);
+    }
+  })
+  // schools-index route to return list of all schools
+  .get(
+    "/schools-index",
+    async ({ cache, cacheKey, status }) => {
+      const req = await fetch("https://www.ncaa.com/json/schools");
+      try {
+        const json = (await req.json()).map((school: Record<string, string>) => ({
+          slug: school.slug,
+          name: school.name?.trim(),
+          long: school.long_name?.trim(),
+        }));
+        const data = JSON.stringify(json);
+        cache.set(cacheKey, data);
+        return data;
+      } catch (_) {
+        return status(500, "Error fetching data");
+      }
+    },
+    { detail: { hide: true } }
+  )
+  // news route to fetch and parse RSS feed
+  .get(
+    "/news/:sport/:division",
+    async ({ params, cache, cacheKey, status }) => {
+      if (cache.has(cacheKey)) {
+        return cache.get(cacheKey);
+      }
+
+      const url = `https://www.ncaa.com/news/${params.sport}/${params.division}/rss.xml`;
+      const res = await fetch(url);
+
+      if (!res.ok) {
+        return status(404, "RSS feed not found");
+      }
+
+      try {
+        const xmlContent = await res.text();
+        const { document } = parseHTML(xmlContent);
+
+        // Get text content, handling CDATA (raw or converted to HTML comments)
+        const getText = (el: Element | null) => {
+          const text = el?.textContent?.trim();
+          if (text) {
+            // Strip raw CDATA wrapper if present
+            const cdataMatch = text.match(/^<!\[CDATA\[([\s\S]*)\]\]>$/);
+            return cdataMatch ? cdataMatch[1].trim() : text;
+          }
+          // linkedom converts CDATA to comments when it contains HTML, extract from innerHTML
+          const html = el?.innerHTML ?? "";
+          const match = html.match(/^<!--\[CDATA\[([\s\S]*)\]\]-->$/);
+          return match ? match[1].trim() : "";
+        };
+
+        // linkedom treats <link> as void element, URL becomes next sibling text node
+        const getLink = (parent: Element | null) => {
+          const link = parent?.querySelector("link");
+          return link?.nextSibling?.textContent?.trim() ?? "";
+        };
+
+        const channel = document.querySelector("channel");
+
+        const result = {
+          title: getText(channel?.querySelector("title") ?? null),
+          link: getLink(channel),
+          description: getText(channel?.querySelector("description") ?? null),
+          language: getText(channel?.querySelector("language") ?? null),
+          items: [...document.querySelectorAll("item")].map((item) => {
+            let description = getText(item.querySelector("description"));
+            let image = "";
+
+            // Extract image URL from description HTML if present
+            const imgMatch = description.match(/<img[^>]+src=["']([^"']+)["']/i);
+            if (imgMatch) {
+              image = imgMatch[1];
+              description = description.replace(/<img[^>]*>\s*/i, "").trim();
+            }
+
+            return {
+              title: getText(item.querySelector("title")),
+              link: getLink(item),
+              description,
+              image,
+              pubDate: getText(item.querySelector("pubDate")),
+              creator: getText(item.querySelector("dc\\:creator")),
+              category: getText(item.querySelector("category")),
+              enclosure: getText(item.querySelector("enclosure")),
+            };
+          }),
+        };
+
+        const data = JSON.stringify(result);
+        cache.set(cacheKey, data);
+        return data;
+      } catch (_) {
+        return status(500, "Error parsing RSS feed");
+      }
+    },
+    { detail: { hide: true } }
+  )
+  .group("/game", (app) =>
+    app
+      // game route to retrieve game details
+      .get(
+        "/:id",
+        async ({ cache, cacheKey, status, params: { id } }) => {
+          const req = await fetch(
+            `https://sdataprod.ncaa.com/?meta=GetGamecenterGameById_web&extensions={%22persistedQuery%22:{%22version%22:1,%22sha256Hash%22:%2293a02c7193c89d85bcdda8c1784925d9b64657f73ef584382e2297af555acd4b%22}}&variables={%22id%22:%22${id}%22,%22week%22:null,%22staticTestEnv%22:null}`
+          );
+          if (!req.ok) {
+            return status(404, "Resource not found");
+          }
+          const data = JSON.stringify((await req.json())?.data);
+          cache.set(cacheKey, data);
+          return data;
+        },
+        {
+          detail: { hide: true },
+          params: t.Object({
+            id: t.Number({ minimum: 999999, maximum: 99999999 }),
+          }),
+        }
+      )
+      .get(
+        "/:id/boxscore",
+        async ({ cache, cacheKey, status, params: { id } }) => {
+          const hashes = [boxscoreHashes.TeamStatsBasketball];
+          for (const hash of hashes) {
+            if (!hash || hashes.length > 2) {
+              continue;
+            }
+            const req = await fetch(
+              `https://sdataprod.ncaa.com/?extensions={"persistedQuery":{"version":1,"sha256Hash":"${hash}"}}&variables={"contestId":"${id}","staticTestEnv":null}`
+            );
+            if (!req.ok) {
+              continue;
+            }
+            const json = await req.json();
+
+            // check if team stats data is empty (only has type name property)
+            // if so, use type name as identifier to find correct hash from allHashes
+            const teamStats: undefined | Record<string, unknown> =
+              json?.data?.boxscore?.teamBoxscore?.at(0)?.teamStats;
+            if (Object.keys(teamStats ?? {}).length < 2) {
+              const typeName = teamStats?.__typename as string | undefined;
+              if (typeName && typeName in boxscoreHashes) {
+                hashes.push(boxscoreHashes[typeName as keyof typeof boxscoreHashes]);
+              }
+              continue;
+            }
+            const data = JSON.stringify(json.data.boxscore);
+            cache.set(cacheKey, data);
+            return data;
+          }
+          return status(502, "Error fetching data");
+        },
+        {
+          detail: { hide: true },
+          params: t.Object({
+            id: t.Number({ minimum: 999999, maximum: 99999999 }),
+          }),
+        }
+      )
+      .get(
+        "/:id/play-by-play",
+        async ({ cache, cacheKey, status, params: { id } }) => {
+          const hashes = [playByPlayHashes.PlayByPlayGenericSport];
+          for (const hash of hashes) {
+            if (!hash || hashes.length > 2) {
+              continue;
+            }
+            const req = await fetch(
+              `https://sdataprod.ncaa.com/?extensions={"persistedQuery":{"version":1,"sha256Hash":"${hash}"}}&variables={"contestId":"${id}","staticTestEnv":null}`
+            );
+            if (!req.ok) {
+              continue;
+            }
+            const json = await req.json();
+
+            // check if pbp data is empty (only has type name property)
+            // if so, use type name as identifier to find correct hash from allHashes
+            const pbpStat: undefined | Record<string, unknown> = json?.data?.playbyplay?.periods
+              ?.at(0)
+              ?.playbyplayStats?.at(0);
+            if (Object.keys(pbpStat ?? {}).length < 2) {
+              const typeName = pbpStat?.__typename as string | undefined;
+              if (typeName && typeName in playByPlayHashes) {
+                hashes.push(playByPlayHashes[typeName as keyof typeof playByPlayHashes]);
+              }
+              continue;
+            }
+            const data = JSON.stringify(json.data.playbyplay);
+            cache.set(cacheKey, data);
+            return data;
+          }
+          return status(502, "Error fetching data");
+        },
+        {
+          detail: { hide: true },
+          params: t.Object({
+            id: t.Number({ minimum: 999999, maximum: 99999999 }),
+          }),
+        }
+      )
+      .get(
+        "/:id/scoring-summary",
+        async ({ cache, cacheKey, status, params: { id } }) => {
+          const hash = "7f86673d4875cd18102b7fa598e2bc5da3f49d05a1c15b1add0e2367ee890198";
+          const req = await fetch(
+            `https://sdataprod.ncaa.com/?extensions={"persistedQuery":{"version":1,"sha256Hash":"${hash}"}}&variables={"contestId":"${id}","staticTestEnv":null}`
+          );
+          if (req.ok) {
+            const json = await req.json();
+            if (json?.data?.scoringSummary) {
+              const data = JSON.stringify(json.data.scoringSummary);
+              cache.set(cacheKey, data);
+              return data;
+            }
+          }
+          return status(502, "Error fetching data");
+        },
+        {
+          detail: { hide: true },
+          params: t.Object({
+            id: t.Number({ minimum: 999999, maximum: 99999999 }),
+          }),
+        }
+      )
+      .get(
+        "/:id/team-stats",
+        async ({ cache, cacheKey, status, params: { id } }) => {
+          const hashes = [teamStatsHashes.TeamStatsBasketball];
+          for (const hash of hashes) {
+            if (!hash || hashes.length > 2) {
+              continue;
+            }
+            const req = await fetch(
+              `https://sdataprod.ncaa.com/?extensions={"persistedQuery":{"version":1,"sha256Hash":"${hash}"}}&variables={"contestId":"${id}","staticTestEnv":null}`
+            );
+            if (!req.ok) {
+              continue;
+            }
+            const json = await req.json();
+
+            // check if team stats data is empty (only has type name property)
+            // if so, use type name as identifier to find correct hash from allHashes
+            const teamStats: undefined | Record<string, unknown> =
+              json?.data?.boxscore?.teamBoxscore?.at(0)?.teamStats;
+            if (Object.keys(teamStats ?? {}).length < 2) {
+              const typeName = teamStats?.__typename as string | undefined;
+              if (typeName && typeName in teamStatsHashes) {
+                hashes.push(teamStatsHashes[typeName as keyof typeof teamStatsHashes]);
+              }
+              continue;
+            }
+            const data = JSON.stringify(json.data.boxscore);
+            cache.set(cacheKey, data);
+            return data;
+          }
+          return status(502, "Error fetching data");
+        },
+        {
+          detail: { hide: true },
+          params: t.Object({
+            id: t.Number({ minimum: 999999, maximum: 99999999 }),
+          }),
+        }
+      )
+  )
+  // brackets route to retrieve tournament brackets
+  .get(
+    "/brackets/:sport/:division/:year",
+    async ({ cache, cacheKey, params, status }) => {
+      let divisionCode: string | number;
+      try {
+        divisionCode = getDivisionCode(params.sport, params.division);
+      } catch (_) {
+        return status(400, "Invalid sport or division");
+      }
+
+      const variables = {
+        sportUrl: params.sport,
+        division: Number(divisionCode),
+        year: parseInt(params.year, 10),
+        // showUnstaged: false,
+        // staticTestEnv: null,
+      };
+      const extensions = {
+        persistedQuery: {
+          version: 1,
+          sha256Hash: "e651c2602fb9e82cdad6e947389600c6b69e0e463e437b78bf7ec614d6d15f80",
+        },
+      };
+      const url = `https://sdataprod.ncaa.com/?operationName=get_championship_ncaa&variables=${encodeURIComponent(
+        JSON.stringify(variables)
+      )}&extensions=${encodeURIComponent(JSON.stringify(extensions))}`;
+
+      const req = await fetch(url);
+
+      if (!req.ok) {
+        return status(404, "Resource not found");
+      }
+
+      try {
+        const json = await req.json();
+        if (!json?.data?.championships || json.data.championships.length === 0) {
+          return status(404, "Resource not found");
+        }
+        const data = JSON.stringify(json.data);
+        cache.set(cacheKey, data);
+        return data;
+      } catch (_) {
+        return status(502, "Error parsing upstream response");
+      }
+    },
+    {
+      detail: { hide: true },
+      params: t.Object({
+        sport: t.String(),
+        division: t.String(),
+        year: t.String(),
+      }),
+    }
+  )
+  // schedule route to retrieve game dates
+  .get(
+    "/schedule/:sport/:division/*",
+    async ({ cache, cacheKey, params, status }) => {
+      const rest = decodeURIComponent(params["*"]);
+      const req = await fetch(
+        `https://data.ncaa.com/casablanca/schedule/${params.sport}/${params.division}/${rest}/schedule-all-conf.json`
+      );
+
+      if (!req.ok) {
+        return status(404, "Resource not found");
+      }
+
+      const data = JSON.stringify(await req.json());
+      cache.set(cacheKey, data);
+      return data;
+    },
+    { detail: { hide: true } }
+  )
+  .get(
+    "/schedule-alt/:sport/:division/:year",
+    async ({ cache, cacheKey, params, status }) => {
+      const sportCode = newCodesBySport[params.sport as keyof typeof newCodesBySport].code;
+      if (!sportCode) {
+        return status(400, "Invalid sport");
+      }
+      const divisionCode = getDivisionCode(params.sport, params.division);
+      if (!divisionCode) {
+        return status(400, "Invalid division");
+      }
+      const url = `https://sdataprod.ncaa.com/?extensions={"persistedQuery":{"version":1,"sha256Hash":"a25ad021179ce1d97fb951a49954dc98da150089f9766e7e85890e439516ffbf"}}&queryName=NCAA_schedules_today_web&variables={"sportCode":"${sportCode}","division":${divisionCode},"seasonYear":${params.year}}`;
+      const req = await fetch(url);
+
+      if (!req.ok) {
+        return status(404, "Resource not found");
+      }
+
+      const data = JSON.stringify(await req.json());
+      cache.set(cacheKey, data);
+      return data;
+    },
+    { detail: { hide: true } }
+  )
+  // scoreboard route to fetch data from data.ncaa.com json endpoint
+  .get(
+    "/scoreboard/:sport/*",
+    async ({ cache, cacheKey, params, set, status }) => {
+      const semCacheKey = getSemaphore(cacheKey);
+      await semCacheKey.acquire();
+      try {
+        if (cache.has(cacheKey)) {
+          set.headers["x-score-cache"] = "hit";
+          return cache.get(cacheKey);
+        }
+
+        // Parse URL path to extract year and week parameters
+        const rest = decodeURIComponent(params["*"]);
+        const [division, year] = rest.split("/");
+
+        // find date in url
+        const urlDateMatcher = /(\d{4}\/\d{2}\/\d{2})|(\d{4}\/(\d{2}|P))/;
+        let urlDate = rest.match(urlDateMatcher)?.[0];
+
+        if (urlDate) {
+          // return 400 if date is more than a year in the future
+          // (had runaway bot requesting every day until I noticed it in 2195)
+          if (new Date(urlDate).getFullYear() > new Date().getFullYear() + 1) {
+            return status(400, "Invalid date");
+          }
+        } else {
+          // if date not in passed in url, fetch date from today.json
+          urlDate = await getTodayUrl(params.sport, division);
+        }
+
+        const scoreboardDate = new Date(urlDate);
+
+        // Use the year from URL
+        const effectiveYear = parseInt(year, 10) || new Date().getFullYear();
+
+        // Check if we should use new endpoint
+        const supportsNewApi = doesSupportScoreboardNewApi(
+          params.sport,
+          effectiveYear,
+          scoreboardDate.getMonth()
+        );
+
+        if (supportsNewApi && params.sport in newCodesBySport) {
+          try {
+            const sportCode = newCodesBySport[params.sport].code;
+            // Check week-based cache first for shared caching
+            const weekCacheKey = `${sportCode}_${division}_${urlDate}`;
+            if (cache.has(weekCacheKey)) {
+              set.headers["x-score-cache"] = "hit";
+              return cache.get(weekCacheKey);
+            }
+
+            const divisionCode = getDivisionCode(params.sport, division);
+
+            const isFootball = sportCode === "MFB";
+            const seasonYear =
+              isFootball || Number.isNaN(scoreboardDate.getTime())
+                ? effectiveYear
+                : getSeasonYear(scoreboardDate);
+
+            const newParams: NewScoreboardParams = {
+              sportCode,
+              division: divisionCode,
+              seasonYear,
+            };
+
+            const weekCode = urlDate.split("/")[1] ?? "1";
+            const isPlayoff = isFootball && weekCode === "P";
+
+            if (isFootball && !isPlayoff) {
+              newParams.week = parseInt(weekCode, 10);
+            } else if (!isPlayoff) {
+              newParams.contestDate = urlDate;
+            }
+
+            // Fetch playoff weeks combined or single week/date
+            const newData = isPlayoff
+              ? await fetchPlayoffScoreboard(newParams)
+              : await fetchGqlScoreboard(newParams);
+            const convertedData = await convertToOldFormat(
+              newData,
+              params.sport,
+              division,
+              urlDate
+            );
+            const data = JSON.stringify(convertedData);
+
+            // Use week-based cache key for shared caching across different URL formats
+            cache.set(weekCacheKey, data);
+
+            // Also cache under the original cache key for consistency
+            cache.set(cacheKey, data);
+            return data;
+          } catch (err) {
+            log(`Failed to fetch from new endpoint, falling back to old endpoint: ${err}`);
+            // Fall through to old endpoint logic
+          }
+        }
+
+        // Use old endpoint logic
+        const url = `https://data.ncaa.com/casablanca/scoreboard/${params.sport}/${division}/${urlDate}/scoreboard.json`;
+
+        const semUrl = getSemaphore(url);
+        await semUrl.acquire();
+        try {
+          // check cache
+          if (cache.has(url)) {
+            set.headers["x-score-cache"] = "hit";
+            return cache.get(url);
+          }
+          // fetch data
+          const res = await fetch(url);
+          if (!res.ok) {
+            return status(404, "Resource not found");
+          }
+          const data = JSON.stringify(await res.json());
+          cache.set(cacheKey, data);
+          cache.set(url, data);
+          return data;
+        } finally {
+          semUrl.release();
+        }
+      } finally {
+        semCacheKey.release();
+      }
+    },
+    { detail: { hide: true } }
+  )
+  // all other routes fetch data by scraping ncaa.com
+  .get(
+    "/*",
+    async ({ query: { page }, path, cache, cacheKey }) => {
+      if (cache.has(cacheKey)) {
+        return cache.get(cacheKey);
+      }
+      // fetch data
+      const data = JSON.stringify(await getData({ path, page }));
+      cache.set(cacheKey, data);
+      return data;
+    },
+    { detail: { hide: true } }
+  )
+  .listen(3000);
+
+log(`Server is running at ${app.server?.url}`);
+
+//////////////////////////////////////////////////////////////////////////////
+/////////////////////////////// FUNCTIONS ////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////
+
+/**
+ * Check if this is a D1 football request that should use new endpoint
+ * @param sport - sport parameter
+ * @param division - division parameter
+ * @param year - year from URL (optional)
+ * @returns boolean indicating if new endpoint should be used
+ */
+// function shouldUseNewEndpoint(sport: string, division: string, year?: string) {
+//   return sport === "football" && division === "fbs" && year === "2025";
+// }
+
+/**
+ * Fetch proper url date for today from ncaa.com
+ * @param sport - sport to fetch
+ * @param division - division to fetch
+ */
+async function getTodayUrl(sport: string, division: string): Promise<string> {
+  // check cache
+  const cacheKey = `today-${sport}-${division}`;
+  if (cache_30m.has(cacheKey)) {
+    return cache_30m.get(cacheKey);
+  }
+
+  log(`Fetching today.json for ${sport} ${division}`);
+  try {
+    const today = await getScheduleBySportAndDivision(sport, division as DivisionKey);
+    cache_30m.set(cacheKey, today);
+    return today;
+  } catch (err) {
+    log(`Failed to fetch schedule from new endpoint, falling back to old endpoint: ${err}`);
+    // Fall through to old endpoint logic
+  }
+  const req = await fetch(
+    `https://data.ncaa.com/casablanca/schedule/${sport}/${division}/today.json`
+  );
+  if (!req.ok) {
+    throw new NotFoundError(JSON.stringify({ message: "Resource not found" }));
+  }
+  const data = await req.json();
+  cache_30m.set(cacheKey, data.today);
+  return data.today as string;
+}
+
+/**
+ * Fetch data from ncaa.com
+ * @param opts.path - path to fetch from ncaa.com
+ * @param opts.page - page number to fetch
+ */
+async function getData(opts: { path: string; page?: string }) {
+  // fetch html
+  const url = `https://www.ncaa.com${opts.path}${
+    opts.page && Number(opts.page) > 1 ? `/p${opts.page}` : ""
+  }`;
+  log(`Fetching ${url}`);
+  const res = await fetch(url);
+
+  if (!res.ok) {
+    throw new NotFoundError(JSON.stringify({ message: "Resource not found" }));
+  }
+
+  // parse with linkedom
+  const { document } = parseHTML(await res.text());
+
+  const table = document.querySelector("main table") as HTMLTableElement;
+
+  if (!table) {
+    throw new Error("Could not parse data");
+  }
+
+  const route = opts.path.split("/")[1];
+
+  // find general info
+  const sport = document.querySelector("h2.page-title")?.textContent?.trim() ?? "";
+
+  let title = "";
+  const titleEl = document.querySelectorAll(
+    ".stats-header__lower__title, main option[selected], main h1.node__title"
+  )?.[0];
+
+  if (titleEl) {
+    titleEl.querySelector(".hidden")?.remove();
+    title = titleEl.textContent?.trim() ?? "";
+  } else {
+    title = route === "standings" ? "ALL CONFERENCES" : document.title.split(" |")[0];
+  }
+
+  const updated =
+    document
+      .querySelectorAll(
+        ".stats-header__lower__desc, .rankings-last-updated, .standings-last-updated"
+      )?.[0]
+      ?.textContent?.replace(/Last updated /i, "")
+      .trim() ?? "";
+
+  // figure out pages
+  let page = 1;
+  let pages = 1;
+  const tablePageLinks = document.querySelectorAll(
+    "ul.stats-pager li:not(.stats-pager__li--prev):not(.stats-pager__li--next)"
+  );
+  if (tablePageLinks.length > 0) {
+    page = [...tablePageLinks].findIndex((li) => li.classList.contains("active")) + 1;
+    pages = tablePageLinks.length;
+  }
+
+  const data = route === "standings" ? parseStandings(document) : parseTable(table);
+
+  return { sport, title, updated, page, pages, data };
+}
+
+/**
+ * Parse standings pages (multiple tables)
+ * @param document - document to parse
+ */
+function parseStandings(document: Document) {
+  const data = [];
+
+  const conferenceTitles = document.querySelectorAll(".standings-conference");
+
+  for (const conf of conferenceTitles) {
+    const confTable = conf.nextElementSibling as HTMLTableElement;
+    if (!confTable) {
+      throw new Error("Could not parse data");
+    }
+    data.push({
+      conference: conf.textContent?.trim() ?? "",
+      standings: parseTable(confTable),
+    });
+  }
+
+  return data;
+}
+
+/**
+ * Parse table elements
+ * @param table - table element to parse
+ */
+function parseTable(table: HTMLTableElement) {
+  const data = [];
+
+  let keys: (string | null)[] = [];
+
+  // standings tables have subheaders :/
+  const hasSubheader = table.querySelector(".standings-table-subheader");
+
+  if (hasSubheader) {
+    keys = getStandingsHeaders(table);
+  } else {
+    keys = [...table.querySelectorAll("thead th")].map((th) => th.textContent);
+  }
+
+  const rows = table.querySelectorAll("tbody tr:not(.subdiv-header)");
+  for (const row of rows) {
+    const rowData: Record<string, string> = {};
+    const cells = row.querySelectorAll("td");
+    for (let i = 0; i < cells.length; i++) {
+      const key = keys[i];
+      if (key) {
+        rowData[key] = cells[i].textContent?.trim() ?? "";
+      }
+    }
+    data.push(rowData);
+  }
+  return data;
+}
+
+/**
+ * Merge table headers that span multiple columns.
+ * Use the first row of headers as the base according to colspan and
+ * concat the second row th textContent to the first row th textContent
+ * @param table - table element to parse
+ */
+function getStandingsHeaders(table: HTMLTableElement) {
+  const tableRowOne = table.querySelector(".standings-table-header");
+  const tableRowTwo = table.querySelector(".standings-table-subheader");
+
+  if (!tableRowOne || !tableRowTwo) {
+    throw new Error("Could not parse data");
+  }
+
+  const headings: (string | null)[] = [];
+  const rowOneHeadings: string[] = [];
+
+  const rowOneThs = tableRowOne.querySelectorAll("th");
+  for (const th of rowOneThs) {
+    const colspan = Number(th.getAttribute("colspan")) || 1;
+    const heading = th.textContent?.trim() ?? "";
+    for (let i = 0; i < colspan; i++) {
+      rowOneHeadings.push(heading);
+    }
+  }
+
+  const rowTwoThs = tableRowTwo.querySelectorAll("th");
+  for (let i = 0; i < rowTwoThs.length; i++) {
+    const th = rowTwoThs[i];
+    const heading = th.textContent?.trim() ?? "";
+    headings.push(rowOneHeadings[i] + (heading ? ` ${heading}` : ""));
+  }
+
+  return headings;
+}
+
+process.on("SIGINT", async () => {
+  console.log("\nShutting down...");
+  await app.stop();
+  process.exit(0);
+});

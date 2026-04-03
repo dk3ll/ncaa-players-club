@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>2026 NCAA Tournament Draft Dashboard</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #0a0e1a;
+      color: #e8eaf0;
+      min-height: 100vh;
+    }
+
+    header {
+      background: linear-gradient(135deg, #1a237e 0%, #0d47a1 50%, #1565c0 100%);
+      padding: 24px 32px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 3px solid #f9a825;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+    }
+
+    header h1 {
+      font-size: 1.6rem;
+      font-weight: 800;
+      letter-spacing: 0.5px;
+    }
+
+    header h1 span { color: #f9a825; }
+
+    #last-updated {
+      font-size: 0.8rem;
+      color: #90caf9;
+      text-align: right;
+    }
+
+    #refresh-btn {
+      background: #f9a825;
+      color: #0a0e1a;
+      border: none;
+      padding: 8px 18px;
+      border-radius: 6px;
+      font-weight: 700;
+      cursor: pointer;
+      font-size: 0.85rem;
+      transition: background 0.2s;
+    }
+
+    #refresh-btn:hover { background: #fbc02d; }
+    #refresh-btn:disabled { background: #555; color: #999; cursor: not-allowed; }
+
+    .header-right { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+
+    main { padding: 24px 32px; max-width: 1600px; margin: 0 auto; }
+
+    /* Leaderboard */
+    #leaderboard {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 12px;
+      margin-bottom: 32px;
+    }
+
+    .leader-card {
+      background: #131929;
+      border: 1px solid #1e2d4a;
+      border-radius: 10px;
+      padding: 16px 20px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      cursor: pointer;
+      transition: border-color 0.2s, transform 0.1s;
+    }
+
+    .leader-card:hover { border-color: #4fc3f7; transform: translateY(-1px); }
+    .leader-card.active { border-color: #f9a825; background: #1a2035; }
+
+    .rank-badge {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 900;
+      font-size: 1rem;
+      flex-shrink: 0;
+    }
+
+    .rank-1 { background: #f9a825; color: #0a0e1a; }
+    .rank-2 { background: #90a4ae; color: #0a0e1a; }
+    .rank-3 { background: #a1887f; color: #fff; }
+    .rank-other { background: #1e2d4a; color: #90caf9; }
+
+    .leader-info { flex: 1; min-width: 0; }
+    .leader-name { font-weight: 700; font-size: 1rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .leader-team { font-size: 0.75rem; color: #78909c; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .leader-pts { font-size: 1.4rem; font-weight: 900; color: #f9a825; white-space: nowrap; }
+    .leader-pts span { font-size: 0.7rem; color: #78909c; font-weight: 400; }
+
+    /* Detail panel */
+    #detail-panel {
+      background: #131929;
+      border: 1px solid #1e2d4a;
+      border-radius: 12px;
+      padding: 24px;
+      display: none;
+    }
+
+    #detail-panel.visible { display: block; }
+
+    #detail-header {
+      display: flex;
+      align-items: baseline;
+      gap: 16px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+
+    #detail-header h2 { font-size: 1.3rem; font-weight: 800; }
+    #detail-header .detail-team { color: #78909c; font-size: 0.9rem; }
+    #detail-header .detail-total { margin-left: auto; font-size: 1.6rem; font-weight: 900; color: #f9a825; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+    }
+
+    thead th {
+      text-align: left;
+      padding: 10px 14px;
+      color: #78909c;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      border-bottom: 1px solid #1e2d4a;
+    }
+
+    thead th.num { text-align: right; }
+
+    tbody tr { border-bottom: 1px solid #0f1624; transition: background 0.15s; }
+    tbody tr:hover { background: #1a2035; }
+    tbody tr:last-child { border-bottom: none; }
+
+    td { padding: 11px 14px; }
+    td.num { text-align: right; }
+
+    .pts-cell { font-weight: 700; color: #4fc3f7; }
+    .pts-zero { color: #37474f; }
+
+    .team-badge {
+      display: inline-block;
+      background: #1e2d4a;
+      color: #90caf9;
+      border-radius: 4px;
+      padding: 2px 8px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+
+    /* Loading / error states */
+    #loading {
+      text-align: center;
+      padding: 60px;
+      color: #78909c;
+      font-size: 1rem;
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 28px;
+      height: 28px;
+      border: 3px solid #1e2d4a;
+      border-top-color: #f9a825;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin-bottom: 12px;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    #error-msg {
+      background: #1a0a0a;
+      border: 1px solid #b71c1c;
+      color: #ef9a9a;
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin-bottom: 20px;
+      display: none;
+    }
+
+    .section-title {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #546e7a;
+      margin-bottom: 12px;
+    }
+
+    @media (max-width: 600px) {
+      header { flex-direction: column; gap: 12px; align-items: flex-start; }
+      main { padding: 16px; }
+      .header-right { align-items: flex-start; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🏀 2026 NCAA Tournament <span>Draft Dashboard</span></h1>
+    <div class="header-right">
+      <button id="refresh-btn" onclick="loadData()">↻ Refresh</button>
+      <div id="last-updated">Never updated</div>
+    </div>
+  </header>
+
+  <main>
+    <div id="error-msg"></div>
+    <div id="loading">
+      <div class="spinner"></div>
+      <div>Loading tournament stats...</div>
+    </div>
+
+    <div id="content" style="display:none">
+      <p class="section-title">Standings — click a card to see player breakdown</p>
+      <div id="leaderboard"></div>
+      <div id="detail-panel"></div>
+    </div>
+  </main>
+
+  <script>
+    let allData = [];
+    let activeOwner = null;
+
+    async function loadData() {
+      const btn = document.getElementById('refresh-btn');
+      const loading = document.getElementById('loading');
+      const content = document.getElementById('content');
+      const errEl = document.getElementById('error-msg');
+
+      btn.disabled = true;
+      btn.textContent = '↻ Loading...';
+      loading.style.display = 'block';
+      content.style.display = 'none';
+      errEl.style.display = 'none';
+
+      try {
+        const res = await fetch('/dashboard/stats');
+        if (!res.ok) throw new Error(`Server returned ${res.status}`);
+        allData = await res.json();
+        render();
+        document.getElementById('last-updated').textContent =
+          'Updated ' + new Date().toLocaleTimeString();
+      } catch (e) {
+        errEl.textContent = 'Failed to load stats: ' + e.message;
+        errEl.style.display = 'block';
+      } finally {
+        loading.style.display = 'none';
+        content.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = '↻ Refresh';
+      }
+    }
+
+    function render() {
+      const sorted = [...allData].sort((a, b) => b.total_points - a.total_points);
+      const lb = document.getElementById('leaderboard');
+      lb.innerHTML = '';
+
+      sorted.forEach((owner, i) => {
+        const rank = i + 1;
+        const card = document.createElement('div');
+        card.className = 'leader-card' + (activeOwner === owner.real_name ? ' active' : '');
+        card.innerHTML = `
+          <div class="rank-badge rank-${rank <= 3 ? rank : 'other'}">${rank}</div>
+          <div class="leader-info">
+            <div class="leader-name">${owner.real_name}</div>
+            <div class="leader-team">${owner.team_name || '—'}</div>
+          </div>
+          <div class="leader-pts">${owner.total_points}<br><span>pts</span></div>
+        `;
+        card.onclick = () => showDetail(owner);
+        lb.appendChild(card);
+      });
+
+      if (activeOwner) {
+        const current = allData.find(o => o.real_name === activeOwner);
+        if (current) showDetail(current, false);
+      }
+    }
+
+    function showDetail(owner, scroll = true) {
+      activeOwner = owner.real_name;
+
+      // Update active state on cards
+      document.querySelectorAll('.leader-card').forEach(c => c.classList.remove('active'));
+      document.querySelectorAll('.leader-card').forEach(c => {
+        if (c.querySelector('.leader-name')?.textContent === owner.real_name) {
+          c.classList.add('active');
+        }
+      });
+
+      const panel = document.getElementById('detail-panel');
+      panel.className = 'visible';
+
+      const rows = owner.players.map(p => `
+        <tr>
+          <td>${p.name}</td>
+          <td><span class="team-badge">${p.team}</span></td>
+          <td class="num pts-cell ${p.points === 0 ? 'pts-zero' : ''}">${p.points}</td>
+          <td class="num" style="color:#546e7a">${p.gamesPlayed}</td>
+        </tr>
+      `).join('');
+
+      panel.innerHTML = `
+        <div id="detail-header">
+          <h2>${owner.real_name}</h2>
+          <span class="detail-team">${owner.team_name || ''}</span>
+          <span class="detail-total">${owner.total_points} pts</span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Player</th>
+              <th>Team</th>
+              <th class="num">Points</th>
+              <th class="num">Games</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      `;
+
+      if (scroll) panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    // Auto-refresh every 2 minutes
+    setInterval(loadData, 2 * 60 * 1000);
+    loadData();
+  </script>
+</body>
+</html>
