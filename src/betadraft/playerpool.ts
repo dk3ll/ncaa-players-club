@@ -1,77 +1,17 @@
 // Fetches NCAA men's basketball D1 tournament players to build the draft player pool
 import type { DraftPlayer } from "./types";
 
-/** log message to console with timestamp */
 function log(str: string) {
   console.log(`[${new Date().toISOString().substring(0, 19).replace("T", " ")}] [Draft] ${str}`);
 }
 
 const BASE_URL = "http://localhost:3000";
 
-/**
- * Seed-based multiplier representing expected tournament games.
- * Higher seeds are expected to advance further, increasing their projected total contribution.
- * Based on CPP Draft Guide methodology.
- */
 const SEED_MULTIPLIER: Record<number, number> = {
-  1: 6.0,
-  2: 4.5,
-  3: 4.0,
-  4: 3.5,
-  5: 3.0,
-  6: 3.0,
-  7: 2.5,
-  8: 2.5,
-  9: 2.0,
-  10: 2.0,
-  11: 2.0,
-  12: 2.0,
-  13: 1.0,
-  14: 1.0,
-  15: 1.0,
-  16: 1.0,
+  1: 6.0, 2: 4.5, 3: 4.0, 4: 3.5, 5: 3.0, 6: 3.0,
+  7: 2.5, 8: 2.5, 9: 2.0, 10: 2.0, 11: 2.0, 12: 2.0,
+  13: 1.0, 14: 1.0, 15: 1.0, 16: 1.0,
 };
-
-/**
- * Fetch all tournament game IDs and team seeds from the scoreboard.
- */
-async function fetchTournamentGameIdsAndSeeds(): Promise<{
-  gameIds: string[];
-  teamSeeds: Map<string, number>;
-}> {
-  const gameIds: string[] = [];
-  const teamSeeds = new Map<string, number>();
-  const dates = getTournamentDates();
-
-  for (const date of dates) {
-    try {
-      const url = `${BASE_URL}/scoreboard/basketball-men/d1/${date}/all-conf`;
-      const res = await fetch(url);
-      if (!res.ok) continue;
-      const data = await res.json();
-      const games = data?.games || [];
-      for (const g of games) {
-        const id = g?.game?.gameID;
-        if (id && g?.game?.gameState === "final") {
-          gameIds.push(String(id));
-        }
-        // Extract seed info from both home and away teams
-        for (const side of ["home", "away"]) {
-          const team = g?.game?.[side];
-          const teamName =
-            team?.names?.full || team?.names?.short || team?.names?.seo || "";
-          const seed = parseInt(team?.seed, 10);
-          if (teamName && seed >= 1 && seed <= 16) {
-            teamSeeds.set(teamName.toLowerCase(), seed);
-          }
-        }
-      }
-    } catch (_) {
-      /* skip */
-    }
-  }
-  return { gameIds: [...new Set(gameIds)], teamSeeds };
-}
 
 /** Generate date strings for the 2026 NCAA tournament window */
 function getTournamentDates(): string[] {
@@ -90,31 +30,86 @@ function getTournamentDates(): string[] {
 }
 
 /**
+ * Fetch all tournament game IDs, team seeds, and teamId-to-name mapping from scoreboard.
+ */
+async function fetchTournamentGames(): Promise<{
+  gameIds: string[];
+  teamSeeds: Map<string, number>;
+  teamIdToName: Map<string, string>;
+}> {
+  const gameIds: string[] = [];
+  const teamSeeds = new Map<string, number>();
+  const teamIdToName = new Map<string, string>();
+
+  for (const date of getTournamentDates()) {
+    try {
+      const res = await fetch(`${BASE_URL}/scoreboard/basketball-men/d1/${date}/all-conf`);
+      if (!res.ok) continue;
+      const data = await res.json();
+      for (const g of data?.games || []) {
+        const game = g?.game;
+        if (!game) continue;
+        const id = game.gameID;
+        if (id && game.gameState === "final") gameIds.push(String(id));
+        for (const side of ["home", "away"] as const) {
+          const team = game[side];
+          if (!team) continue;
+          const name = team.names?.short || team.names?.seo || "";
+          const seed = parseInt(team.seed, 10);
+          if (name && seed >= 1 && seed <= 16) {
+            teamSeeds.set(name.toLowerCase(), seed);
+          }
+        }
+      }
+    } catch (_) { /* skip */ }
+  }
+
+  // Fetch game details to build teamId → name mapping
+  const uniqueIds = [...new Set(gameIds)];
+  for (let i = 0; i < uniqueIds.length; i += 10) {
+    const batch = uniqueIds.slice(i, i + 10);
+    await Promise.all(batch.map(async (gid) => {
+      try {
+        const res = await fetch(`${BASE_URL}/game/${gid}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const teams = data?.contests?.[0]?.teams || data?.gamecenter?.contest?.teams || [];
+        for (const t of teams) {
+          const tid = String(t.teamId || t.id || "");
+          const name = t.nameShort || t.seoname || "";
+          if (tid && name) teamIdToName.set(tid, name);
+        }
+      } catch (_) { /* skip */ }
+    }));
+  }
+
+  return { gameIds: uniqueIds, teamSeeds, teamIdToName };
+}
+
+/**
  * Fetch boxscore for a game and extract player stats.
+ * Uses teamIdToName map to resolve proper team names from teamId.
  */
 async function fetchBoxscorePlayers(
-  gameId: string
+  gameId: string,
+  teamIdToName: Map<string, string>
 ): Promise<
-  Map<
-    string,
-    { name: string; team: string; position: string; pts: number; reb: number; ast: number }
-  >
+  Map<string, { name: string; team: string; position: string; pts: number; reb: number; ast: number }>
 > {
-  const players = new Map<
-    string,
-    { name: string; team: string; position: string; pts: number; reb: number; ast: number }
-  >();
+  const players = new Map<string, { name: string; team: string; position: string; pts: number; reb: number; ast: number }>();
   try {
     const res = await fetch(`${BASE_URL}/game/${gameId}/boxscore`);
     if (!res.ok) return players;
     const bs = await res.json();
-    const teamBoxscores = bs?.teamBoxscore || [];
-    for (const teamBs of teamBoxscores) {
-      const teamName = teamBs?.team?.name || teamBs?.team?.seoname || teamBs?.teamName || `team-${teamBs?.teamId || "unknown"}`;
-      const playerStats = teamBs?.playerStats || [];
-      for (const ps of playerStats) {
-        // Handle both nested format (ps.player.name) and flat format (ps.firstName + ps.lastName)
-        const playerName = ps?.player?.name || [ps?.firstName, ps?.lastName].filter(Boolean).join(" ");
+    for (const teamBs of bs?.teamBoxscore || []) {
+      // Resolve team name: try team object first, then teamId lookup, then fallback
+      const tid = String(teamBs?.teamId || "");
+      const teamName = teamBs?.team?.nameShort || teamBs?.team?.name || teamBs?.team?.seoname
+        || teamIdToName.get(tid) || teamBs?.teamName || `team-${tid}`;
+
+      for (const ps of teamBs?.playerStats || []) {
+        const playerName = ps?.player?.name
+          || [ps?.firstName, ps?.lastName].filter(Boolean).join(" ");
         if (!playerName) continue;
         const key = `${playerName}|${teamName}`;
         const pts = parseInt(ps?.stats?.pts ?? ps?.stats?.points ?? ps?.points ?? "0", 10) || 0;
@@ -131,40 +126,26 @@ async function fetchBoxscorePlayers(
         }
       }
     }
-  } catch (_) {
-    /* skip */
-  }
+  } catch (_) { /* skip */ }
   return players;
 }
 
 /**
  * Build the full player pool from tournament boxscores.
- * Ranking uses CPP Draft Guide methodology:
- * - P/R/A PG = PPG + RPG + APG (unweighted sum)
- * - Fantasy Score = P/R/A PG × seed multiplier (expected tournament games)
+ * Ranking: Fantasy Score = (PPG + RPG + APG) × seed multiplier
  */
 export async function buildPlayerPool(): Promise<DraftPlayer[]> {
-  const { gameIds, teamSeeds } = await fetchTournamentGameIdsAndSeeds();
+  const { gameIds, teamSeeds, teamIdToName } = await fetchTournamentGames();
   log(`Found ${gameIds.length} games, fetching boxscores...`);
 
-  // Track per-player accumulated stats and game count
-  const accumulated = new Map<
-    string,
-    {
-      name: string;
-      team: string;
-      position: string;
-      pts: number;
-      reb: number;
-      ast: number;
-      games: number;
-    }
-  >();
+  const accumulated = new Map<string, {
+    name: string; team: string; position: string;
+    pts: number; reb: number; ast: number; games: number;
+  }>();
 
-  // Fetch boxscores in batches of 10
   for (let i = 0; i < gameIds.length; i += 10) {
     const batch = gameIds.slice(i, i + 10);
-    const results = await Promise.all(batch.map(fetchBoxscorePlayers));
+    const results = await Promise.all(batch.map(gid => fetchBoxscorePlayers(gid, teamIdToName)));
     for (const playerMap of results) {
       for (const [key, stats] of playerMap) {
         const existing = accumulated.get(key);
@@ -180,7 +161,6 @@ export async function buildPlayerPool(): Promise<DraftPlayer[]> {
     }
   }
 
-  // Convert to DraftPlayer array with per-game averages
   let id = 1;
   const players: DraftPlayer[] = [];
   for (const [, stats] of accumulated) {
@@ -188,24 +168,13 @@ export async function buildPlayerPool(): Promise<DraftPlayer[]> {
     const ppg = Math.round((stats.pts / g) * 10) / 10;
     const rpg = Math.round((stats.reb / g) * 10) / 10;
     const apg = Math.round((stats.ast / g) * 10) / 10;
-    // P/R/A PG: unweighted sum of per-game averages
     const praPg = Math.round((ppg + rpg + apg) * 10) / 10;
-    // Look up team seed (default to 16 if unknown)
     const seed = teamSeeds.get(stats.team.toLowerCase()) || 16;
     const multiplier = SEED_MULTIPLIER[seed] ?? 1.0;
-    // Fantasy score: P/R/A × seed multiplier (projected tournament contribution)
     const fantasyScore = Math.round(praPg * multiplier * 10) / 10;
     players.push({
-      id: id++,
-      name: stats.name,
-      team: stats.team,
-      position: stats.position,
-      ppg,
-      rpg,
-      apg,
-      seed,
-      praPg,
-      fantasyScore,
+      id: id++, name: stats.name, team: stats.team,
+      position: stats.position, ppg, rpg, apg, seed, praPg, fantasyScore,
     });
   }
 
